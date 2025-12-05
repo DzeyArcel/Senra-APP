@@ -6,6 +6,7 @@ class WelcomeScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: const Color(0xFF0C1527),
       body: Container(
         width: double.infinity,
         height: double.infinity,
@@ -14,8 +15,8 @@ class WelcomeScreen extends StatelessWidget {
             begin: Alignment.topCenter,
             end: Alignment.bottomCenter,
             colors: [
-              Color(0xFF0C1527), // dark navy top
-              Color(0xFF0A1120), // darker bottom
+              Color(0xFF0C1527),
+              Color(0xFF0A1120),
             ],
           ),
         ),
@@ -23,27 +24,22 @@ class WelcomeScreen extends StatelessWidget {
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              // Title Glow
-              Container(
-                padding: const EdgeInsets.only(bottom: 8),
-                child: Text(
-                  "Senra",
-                  style: TextStyle(
-                    fontSize: 48,
-                    fontWeight: FontWeight.bold,
-                    color: const Color(0xFF39B9FF),
-                    shadows: [
-                      Shadow(
-                        color: Colors.blue.withOpacity(0.4),
-                        blurRadius: 20,
-                        offset: const Offset(0, 0),
-                      ),
-                    ],
-                  ),
+              Text(
+                "Senra",
+                style: TextStyle(
+                  fontSize: 48,
+                  fontWeight: FontWeight.bold,
+                  color: const Color(0xFF39B9FF),
+                  shadows: [
+                    Shadow(
+                      color: Colors.blue.withOpacity(0.4),
+                      blurRadius: 20,
+                    ),
+                  ],
                 ),
               ),
 
-              const SizedBox(height: 8),
+              const SizedBox(height: 10),
 
               const Text(
                 "Your Safety, Always With You.",
@@ -53,15 +49,15 @@ class WelcomeScreen extends StatelessWidget {
                 ),
               ),
 
-              const SizedBox(height: 50),
+              const SizedBox(height: 60),
 
-              // GET STARTED BUTTON
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 24),
                 child: GestureDetector(
                   onTap: () {
-                Navigator.pushNamed(context, '/caregiver-info');
-
+                    // ⬅ FIXED: No more looping!
+                    Navigator.pushReplacementNamed(
+                        context, "/caregiver-info");
                   },
                   child: Container(
                     width: double.infinity,
@@ -73,7 +69,6 @@ class WelcomeScreen extends StatelessWidget {
                         BoxShadow(
                           color: const Color(0xFF33B6FF).withOpacity(0.4),
                           blurRadius: 20,
-                          offset: Offset(0, 0),
                         )
                       ],
                     ),
@@ -89,7 +84,7 @@ class WelcomeScreen extends StatelessWidget {
                     ),
                   ),
                 ),
-              )
+              ),
             ],
           ),
         ),

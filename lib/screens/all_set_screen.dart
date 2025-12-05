@@ -1,12 +1,29 @@
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class AllSetScreen extends StatelessWidget {
   const AllSetScreen({super.key});
 
+  Future<void> _finishSetup(BuildContext context) async {
+    final prefs = await SharedPreferences.getInstance();
+
+    // Mark onboarding as completed so user won't be redirected again
+    await prefs.setBool("onboarding_complete", true);
+
+    // Go directly to dashboard, remove history
+    if (context.mounted) {
+      Navigator.pushNamedAndRemoveUntil(
+        context,
+        "/dashboard",
+        (route) => false,
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFF0E1625), // exact dark background
+      backgroundColor: const Color(0xFF0E1625),
       body: SafeArea(
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 24),
@@ -14,7 +31,7 @@ class AllSetScreen extends StatelessWidget {
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
 
-              // ====== CHECK ICON WITH GLOW ======
+              // ====== CHECK ICON ======
               Container(
                 padding: const EdgeInsets.all(32),
                 decoration: BoxDecoration(
@@ -25,7 +42,7 @@ class AllSetScreen extends StatelessWidget {
                       color: const Color(0xFF33B5FF).withOpacity(0.3),
                       blurRadius: 30,
                       spreadRadius: 5,
-                    )
+                    ),
                   ],
                 ),
                 child: const Icon(
@@ -63,12 +80,9 @@ class AllSetScreen extends StatelessWidget {
 
               const SizedBox(height: 50),
 
-              // ===== Go to Dashboard BUTTON =====
+              // ===== BUTTON =====
               GestureDetector(
-                onTap: () {
-              Navigator.pushNamed(context, "/dashboard");
-
-                },
+                onTap: () => _finishSetup(context),
                 child: Container(
                   width: double.infinity,
                   padding: const EdgeInsets.symmetric(vertical: 15),
@@ -88,7 +102,6 @@ class AllSetScreen extends StatelessWidget {
                   ),
                 ),
               ),
-
             ],
           ),
         ),

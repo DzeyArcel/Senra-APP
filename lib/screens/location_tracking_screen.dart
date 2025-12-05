@@ -1,10 +1,152 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:url_launcher/url_launcher.dart';
 
-class LocationTrackingScreen extends StatelessWidget {
+class LocationTrackingScreen extends StatefulWidget {
   const LocationTrackingScreen({super.key});
 
   @override
+  State<LocationTrackingScreen> createState() => _LocationTrackingScreenState();
+}
+
+class _LocationTrackingScreenState extends State<LocationTrackingScreen> {
+  String? deviceId;
+
+  double? lat;
+  double? lng;
+
+  String address = "Waiting for GPS…";
+  String lastUpdate = "—";
+  String accuracy = "—";
+
+  bool loading = true;
+  bool hasGps = false;
+
+  StreamSubscription? gpsSub;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadDevice();
+  }
+
+  @override
+  void dispose() {
+    gpsSub?.cancel();
+    super.dispose();
+  }
+
+  // ==========================================================
+  // Load paired device
+  // ==========================================================
+  Future<void> _loadDevice() async {
+    final prefs = await SharedPreferences.getInstance();
+    deviceId = prefs.getString("pairedDevice");
+
+    if (deviceId == null || deviceId!.isEmpty) {
+      setState(() => loading = false);
+      return;
+    }
+
+    _listenToDeviceDocument(deviceId!);
+  }
+
+  // ==========================================================
+  // Listen to Main Device Document (Firmware v10)
+  // ==========================================================
+  void _listenToDeviceDocument(String deviceId) {
+    final ref =
+        FirebaseFirestore.instance.collection("devices").doc(deviceId);
+
+    gpsSub = ref.snapshots().listen((snap) {
+      if (!snap.exists || snap.data() == null) {
+        setState(() {
+          hasGps = false;
+          loading = false;
+          address = "No GPS available yet";
+          lat = null;
+          lng = null;
+        });
+        return;
+      }
+
+      final data = snap.data()!;
+      _applyGpsData(data);
+    });
+
+    setState(() => loading = false);
+  }
+
+  // ==========================================================
+  // Apply Device GPS Data from Firestore
+  // ==========================================================
+  void _applyGpsData(Map<String, dynamic> data) {
+    final double? newLat = (data["lat"] as num?)?.toDouble();
+    final double? newLng = (data["lng"] as num?)?.toDouble();
+
+    if (newLat == null || newLng == null) {
+      setState(() {
+        hasGps = false;
+        address = "No GPS available";
+      });
+      return;
+    }
+
+    final rawSync = data["lastSync"];
+    DateTime? ts;
+
+    if (rawSync is Timestamp) ts = rawSync.toDate();
+    if (rawSync is String) ts = DateTime.tryParse(rawSync);
+
+    setState(() {
+      lat = newLat;
+      lng = newLng;
+      hasGps = true;
+
+      address = "$newLat, $newLng";
+
+      lastUpdate = ts != null
+          ? "${ts.hour.toString().padLeft(2, '0')}:${ts.minute.toString().padLeft(2, '0')}  —  ${ts.month}/${ts.day}/${ts.year}"
+          : "Unknown";
+
+      final num? hdop = data["hdop"];
+      if (hdop != null) {
+        if (hdop <= 1.5) accuracy = "±3m";
+        else if (hdop <= 3) accuracy = "±5m";
+        else accuracy = "Low";
+      } else {
+        accuracy = "—";
+      }
+    });
+  }
+
+  // ==========================================================
+  // Open OpenStreetMap
+  // ==========================================================
+  void openOSM() {
+    if (lat == null || lng == null) return;
+
+    final url =
+        "https://www.openstreetmap.org/?mlat=$lat&mlon=$lng#map=18/$lat/$lng";
+
+    launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
+  }
+
+  // ==========================================================
+  // UI
+  // ==========================================================
+  @override
   Widget build(BuildContext context) {
+    final mapPreview = (lat != null && lng != null)
+        ? "https://staticmap.openstreetmap.de/staticmap.php"
+            "?center=$lat,$lng"
+            "&zoom=16"
+            "&size=600x300"
+            "&markers=$lat,$lng,red"
+        : "";
+
     return Scaffold(
       backgroundColor: const Color(0xFF0E1625),
       body: SafeArea(
@@ -13,8 +155,9 @@ class LocationTrackingScreen extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-
-              // ---------------- TOP BAR ----------------
+              // --------------------------------------------------
+              // HEADER
+              // --------------------------------------------------
               Row(
                 children: [
                   IconButton(
@@ -33,88 +176,43 @@ class LocationTrackingScreen extends StatelessWidget {
                   ),
                 ],
               ),
-
               const SizedBox(height: 4),
-              const Text(
-                "Event-Based Monitoring",
-                style: TextStyle(
-                  color: Colors.white70,
-                  fontSize: 14,
-                ),
-              ),
-
+              const Text("Event-Based Monitoring",
+                  style: TextStyle(color: Colors.white70, fontSize: 14)),
               const SizedBox(height: 22),
 
               // =====================================================
-              //  MAP PREVIEW CONTAINER
+              // MAP PREVIEW
               // =====================================================
-              Container(
-                width: double.infinity,
-                height: 300,
-                decoration: BoxDecoration(
-                  color: const Color(0xFF162233),
-                  borderRadius: BorderRadius.circular(14),
-                ),
-                child: Stack(
-                  alignment: Alignment.center,
-                  children: [
-                    // Grid Background
-                    CustomPaint(
-                      size: const Size(double.infinity, double.infinity),
-                      painter: _GridPainter(),
-                    ),
-
-                    // Location Icon
-                    Container(
-                      padding: const EdgeInsets.all(10),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFF1B2A3A),
-                        shape: BoxShape.circle,
-                      ),
-                      child: const Icon(
-                        Icons.location_on_rounded,
-                        color: Color(0xFF33B5FF),
-                        size: 28,
-                      ),
-                    ),
-
-                    // Label
-                    Positioned(
-                      bottom: 20,
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 18, vertical: 10),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFF0E1625),
-                          borderRadius: BorderRadius.circular(30),
-                        ),
-                        child: const Row(
-                          children: [
-                            Icon(Icons.send_rounded,
-                                size: 18, color: Colors.white),
-                            SizedBox(width: 6),
-                            Text(
-                              "Elder's Current Location (from wearable)",
-                              style: TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 13,
-                                  fontWeight: FontWeight.w600),
+              GestureDetector(
+                onTap: openOSM,
+                child: Container(
+                  height: 300,
+                  width: double.infinity,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF162233),
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(14),
+                    child: (!hasGps || mapPreview.isEmpty)
+                        ? const Center(
+                            child: Text(
+                              "No Location Yet",
+                              style: TextStyle(color: Colors.white54),
                             ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ],
+                          )
+                        : Image.network(mapPreview, fit: BoxFit.cover),
+                  ),
                 ),
               ),
 
               const SizedBox(height: 26),
 
               // =====================================================
-              //  CURRENT LOCATION CARD
+              // DETAILS CARD
               // =====================================================
               Container(
-                width: double.infinity,
                 padding: const EdgeInsets.all(18),
                 decoration: BoxDecoration(
                   color: const Color(0xFF162233),
@@ -123,7 +221,6 @@ class LocationTrackingScreen extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    // Title
                     Row(
                       children: const [
                         Icon(Icons.location_on_rounded,
@@ -144,15 +241,15 @@ class LocationTrackingScreen extends StatelessWidget {
 
                     // Address
                     Row(
-                      children: const [
-                        Icon(Icons.place_rounded,
+                      children: [
+                        const Icon(Icons.place_rounded,
                             color: Colors.white70, size: 18),
-                        SizedBox(width: 8),
+                        const SizedBox(width: 8),
                         Expanded(
                           child: Text(
-                            "123 Main Street, San Francisco, CA 94102",
-                            style:
-                                TextStyle(color: Colors.white, fontSize: 14),
+                            address,
+                            style: const TextStyle(
+                                color: Colors.white, fontSize: 14),
                           ),
                         ),
                       ],
@@ -160,39 +257,12 @@ class LocationTrackingScreen extends StatelessWidget {
 
                     const SizedBox(height: 20),
 
-                    // Last Update + Accuracy
+                    // Update + Accuracy
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        // LAST UPDATE
-                        Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: const [
-                            Text("Last Wearable\nUpdate",
-                                style: TextStyle(
-                                    color: Colors.white70, fontSize: 12)),
-                            SizedBox(height: 6),
-                            Text("Just now",
-                                style: TextStyle(
-                                    color: Colors.white,
-                                    fontWeight: FontWeight.w600)),
-                          ],
-                        ),
-
-                        // GPS ACCURACY
-                        Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: const [
-                            Text("GPS Accuracy",
-                                style: TextStyle(
-                                    color: Colors.white70, fontSize: 12)),
-                            SizedBox(height: 6),
-                            Text("±3 meters",
-                                style: TextStyle(
-                                    color: Colors.white,
-                                    fontWeight: FontWeight.w600)),
-                          ],
-                        ),
+                        _infoBlock("Last Update", lastUpdate),
+                        _infoBlock("Accuracy", accuracy),
                       ],
                     ),
                   ],
@@ -201,53 +271,40 @@ class LocationTrackingScreen extends StatelessWidget {
 
               const SizedBox(height: 22),
 
-              // Info footer card
               Container(
-                width: double.infinity,
                 padding: const EdgeInsets.all(18),
                 decoration: BoxDecoration(
                   color: const Color(0xFF162233),
                   borderRadius: BorderRadius.circular(14),
                 ),
                 child: const Text(
-                  "Location information is provided by the Senra wearable "
-                  "device through its built-in GPS.",
+                  "Location data appears after the device sends its first GPS update.",
                   textAlign: TextAlign.center,
                   style: TextStyle(color: Colors.white70, fontSize: 13),
                 ),
               ),
 
-              const SizedBox(height: 30),
+              const SizedBox(height: 40),
             ],
           ),
         ),
       ),
     );
   }
-}
 
-// =============================
-// MAP GRID PAINTER
-// =============================
-class _GridPainter extends CustomPainter {
-  @override
-  void paint(Canvas canvas, Size size) {
-    const gridColor = Color(0xFF1F2B3A);
-    final paint = Paint()
-      ..color = gridColor
-      ..strokeWidth = 0.8;
-
-    const step = 22.0; // Grid spacing
-
-    for (double x = 0; x < size.width; x += step) {
-      canvas.drawLine(Offset(x, 0), Offset(x, size.height), paint);
-    }
-
-    for (double y = 0; y < size.height; y += step) {
-      canvas.drawLine(Offset(0, y), Offset(size.width, y), paint);
-    }
+  Widget _infoBlock(String label, String value) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(label,
+            style: const TextStyle(color: Colors.white70, fontSize: 12)),
+        const SizedBox(height: 4),
+        Text(value,
+            style: const TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.w600,
+                fontSize: 14)),
+      ],
+    );
   }
-
-  @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }

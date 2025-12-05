@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
-import 'manage_device_screen.dart'; // <-- You already have this
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -13,8 +15,101 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool pushNotifications = true;
   bool emergencyVibration = true;
 
+  String caregiverName = "";
+  String caregiverPhone = "";
+  String caregiverId = "";
+
+  bool loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadSettings();
+  }
+
+  // =================================================================
+  // 🔥 LOAD SETTINGS FROM FIRESTORE (REALTIME SNAPSHOT)
+  // =================================================================
+  Future<void> _loadSettings() async {
+    final prefs = await SharedPreferences.getInstance();
+    caregiverId = prefs.getString("caregiverId") ?? "";
+
+    if (caregiverId.isEmpty) {
+      setState(() => loading = false);
+      return;
+    }
+
+    // REALTIME LISTENER
+    FirebaseFirestore.instance
+        .collection("caregivers")
+        .doc(caregiverId)
+        .snapshots()
+        .listen((doc) {
+      if (!doc.exists) return;
+
+      final data = doc.data()!;
+      setState(() {
+        caregiverName = data["name"] ?? "";
+        caregiverPhone = data["phone"] ?? "";
+
+        locationSharing = data["locationSharing"] ?? true;
+        pushNotifications = data["pushNotifications"] ?? true;
+        emergencyVibration = data["emergencyVibration"] ?? true;
+
+        loading = false;
+      });
+    });
+  }
+
+  // =================================================================
+  // 🔥 SAVE TOGGLES (MERGE)
+  // =================================================================
+  Future<void> _saveToggle(String key, bool value) async {
+    if (caregiverId.isEmpty) return;
+
+    await FirebaseFirestore.instance
+        .collection("caregivers")
+        .doc(caregiverId)
+        .set({key: value}, SetOptions(merge: true));
+  }
+
+  // =================================================================
+  // 🔥 SIGN OUT — FirebaseAuth + Clear SharedPreferences
+  // =================================================================
+  Future<void> _signOut() async {
+    try {
+      await FirebaseAuth.instance.signOut();
+
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.clear();
+
+      if (!mounted) return;
+
+      Navigator.pushNamedAndRemoveUntil(context, "/welcome", (_) => false);
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text("Failed to sign out."),
+          backgroundColor: Colors.redAccent,
+        ),
+      );
+    }
+  }
+
+  // =================================================================
+  // UI
+  // =================================================================
   @override
   Widget build(BuildContext context) {
+    if (loading) {
+      return const Scaffold(
+        backgroundColor: Color(0xFF0E1625),
+        body: Center(
+            child: CircularProgressIndicator(color: Color(0xFF33B5FF))),
+      );
+    }
+
     return Scaffold(
       backgroundColor: const Color(0xFF0E1625),
       body: SafeArea(
@@ -23,7 +118,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // ---------------- TOP BAR ----------------
+
+              // ===========================================================
+              // 🔙 HEADER
+              // ===========================================================
               Row(
                 children: [
                   IconButton(
@@ -51,166 +149,55 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
               const SizedBox(height: 24),
 
-              // =====================================================
-              // 1) DEVICE CARD
-              // =====================================================
-              _settingsCard(
-                child: Column(
+              // ===========================================================
+              // 🔧 DEVICE MANAGEMENT
+              // ===========================================================
+              _card(
+                Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    _sectionTitle("Device", Icons.watch_outlined),
+                    _title("Device", Icons.watch_outlined),
                     const SizedBox(height: 18),
 
-                    // Manage Device Row
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        const Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text("Manage Device",
-                                style: TextStyle(
-                                    color: Colors.white,
-                                    fontWeight: FontWeight.w600,
-                                    fontSize: 15)),
-                            SizedBox(height: 3),
-                            Text("View device status and\nmanage your Senra wearable",
-                                style: TextStyle(
-                                    color: Colors.white54, fontSize: 12)),
-                          ],
-                        ),
-
-                        GestureDetector(
-                          onTap: () {
-                            Navigator.push(
-                              context,
-                              MaterialPageRoute(
-                                  builder: (_) => const ManageDeviceScreen()),
-                            );
-                          },
-                          child: Container(
+                    GestureDetector(
+                      onTap: () {
+                        Navigator.pushNamed(context, "/manage-device");
+                      },
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          const Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text("Manage Device",
+                                  style: TextStyle(
+                                      color: Colors.white,
+                                      fontWeight: FontWeight.w600,
+                                      fontSize: 15)),
+                              SizedBox(height: 3),
+                              Text(
+                                  "View device status &\nmanage your wearable",
+                                  style: TextStyle(
+                                      color: Colors.white54,
+                                      fontSize: 12)),
+                            ],
+                          ),
+                          Container(
                             padding: const EdgeInsets.symmetric(
                                 horizontal: 14, vertical: 8),
                             decoration: BoxDecoration(
-                              border: Border.all(color: const Color(0xFF33B5FF)),
+                              border:
+                                  Border.all(color: Color(0xFF33B5FF)),
                               borderRadius: BorderRadius.circular(10),
                             ),
                             child: const Text(
-                              "Manage Device",
+                              "Open",
                               style: TextStyle(
                                   color: Color(0xFF33B5FF),
                                   fontWeight: FontWeight.w600),
                             ),
                           ),
-                        ),
-                      ],
-                    )
-                  ],
-                ),
-              ),
-
-              const SizedBox(height: 20),
-
-              // =====================================================
-              // 2) PRIVACY & LOCATION CARD
-              // =====================================================
-              _settingsCard(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    _sectionTitle(
-                        "Privacy & Location", Icons.location_on_rounded),
-                    const SizedBox(height: 18),
-
-                    _toggleRow(
-                      title: "Location Sharing",
-                      subtitle: "Share location during emergency alerts",
-                      value: locationSharing,
-                      onChanged: (v) => setState(() => locationSharing = v),
-                    ),
-                  ],
-                ),
-              ),
-
-              const SizedBox(height: 20),
-
-              // =====================================================
-              // 3) NOTIFICATIONS CARD
-              // =====================================================
-              _settingsCard(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    _sectionTitle("Notifications", Icons.notifications_active),
-                    const SizedBox(height: 18),
-
-                    _toggleRow(
-                      title: "Push Notifications",
-                      subtitle: "Receive notifications on this device",
-                      value: pushNotifications,
-                      onChanged: (v) =>
-                          setState(() => pushNotifications = v),
-                    ),
-
-                    const SizedBox(height: 16),
-
-                    _toggleRow(
-                      title: "Emergency Vibration",
-                      subtitle: "Vibrate during emergency alerts",
-                      value: emergencyVibration,
-                      onChanged: (v) =>
-                          setState(() => emergencyVibration = v),
-                    ),
-                  ],
-                ),
-              ),
-
-              const SizedBox(height: 20),
-
-              // =====================================================
-              // 4) ACCOUNT CARD
-              // =====================================================
-              _settingsCard(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    _accountHeader(),
-                    const SizedBox(height: 14),
-
-                    const Text("Name",
-                        style: TextStyle(color: Colors.white70, fontSize: 13)),
-                    const SizedBox(height: 4),
-                    const Text("fda",
-                        style: TextStyle(
-                            color: Colors.white,
-                            fontWeight: FontWeight.w600,
-                            fontSize: 15)),
-                    const SizedBox(height: 12),
-
-                    const Text("Phone Number",
-                        style: TextStyle(color: Colors.white70, fontSize: 13)),
-                    const SizedBox(height: 4),
-                    const Text("34",
-                        style: TextStyle(
-                            color: Colors.white,
-                            fontWeight: FontWeight.w600,
-                            fontSize: 15)),
-                    const SizedBox(height: 16),
-
-                    Container(height: 1, color: Colors.white12),
-                    const SizedBox(height: 14),
-
-                    Center(
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 24, vertical: 12),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFF223247),
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: const Text("Sign Out",
-                            style:
-                                TextStyle(color: Colors.white70, fontSize: 14)),
+                        ],
                       ),
                     ),
                   ],
@@ -219,11 +206,117 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
               const SizedBox(height: 20),
 
-              // =====================================================
-              // 5) APP INFO CARD
-              // =====================================================
-              _settingsCard(
-                child: Column(
+              // ===========================================================
+              // 📍 LOCATION & PRIVACY
+              // ===========================================================
+              _card(
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _title("Privacy & Location", Icons.location_on_rounded),
+                    const SizedBox(height: 18),
+
+                    _toggle(
+                      title: "Location Sharing",
+                      subtitle:
+                          "Automatically send location during emergencies",
+                      value: locationSharing,
+                      onChanged: (v) {
+                        setState(() => locationSharing = v);
+                        _saveToggle("locationSharing", v);
+                      },
+                    ),
+                  ],
+                ),
+              ),
+
+              const SizedBox(height: 20),
+
+              // ===========================================================
+              // 🔔 NOTIFICATIONS
+              // ===========================================================
+              _card(
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _title("Notifications", Icons.notifications_active),
+                    const SizedBox(height: 18),
+
+                    _toggle(
+                      title: "Push Notifications",
+                      subtitle: "Receive fall alerts on this device",
+                      value: pushNotifications,
+                      onChanged: (v) {
+                        setState(() => pushNotifications = v);
+                        _saveToggle("pushNotifications", v);
+                      },
+                    ),
+
+                    const SizedBox(height: 16),
+
+                    _toggle(
+                      title: "Emergency Vibration",
+                      subtitle: "Vibrate when a fall alert is triggered",
+                      value: emergencyVibration,
+                      onChanged: (v) {
+                        setState(() => emergencyVibration = v);
+                        _saveToggle("emergencyVibration", v);
+                      },
+                    ),
+                  ],
+                ),
+              ),
+
+              const SizedBox(height: 20),
+
+              // ===========================================================
+              // 👤 ACCOUNT
+              // ===========================================================
+              _card(
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _accountHeader(),
+
+                    const SizedBox(height: 14),
+
+                    _field("Name", caregiverName),
+                    const SizedBox(height: 12),
+                    _field("Phone Number", caregiverPhone),
+
+                    const SizedBox(height: 16),
+                    Container(height: 1, color: Colors.white12),
+                    const SizedBox(height: 14),
+
+                    Center(
+                      child: GestureDetector(
+                        onTap: _signOut,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 24, vertical: 12),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF223247),
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: const Text(
+                            "Sign Out",
+                            style: TextStyle(
+                                color: Colors.white70, fontSize: 14),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+
+              const SizedBox(height: 30),
+
+              // ===========================================================
+              // 📱 APP INFO
+              // ===========================================================
+              _card(
+                Column(
                   children: const [
                     Text(
                       "Senra App",
@@ -236,13 +329,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     Text("Version 1.0.0",
                         style: TextStyle(color: Colors.white70, fontSize: 13)),
                     SizedBox(height: 8),
-                    Text("Your Safety, Always With You",
-                        style: TextStyle(color: Colors.white54, fontSize: 12)),
+                    Text(
+                      "Your Safety, Always With You",
+                      style: TextStyle(color: Colors.white54, fontSize: 12),
+                    ),
                   ],
                 ),
               ),
 
-              const SizedBox(height: 30),
+              const SizedBox(height: 40),
             ],
           ),
         ),
@@ -250,9 +345,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
-  // ----------------------- UI HELPERS ------------------------------
+  // =================================================================
+  //  UI HELPERS
+  // =================================================================
 
-  Widget _settingsCard({required Widget child}) {
+  Widget _card(Widget child) {
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(18),
@@ -264,21 +361,23 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
-  Widget _sectionTitle(String title, IconData icon) {
+  Widget _title(String title, IconData icon) {
     return Row(
       children: [
         Icon(icon, color: const Color(0xFF33B5FF), size: 22),
         const SizedBox(width: 10),
-        Text(title,
-            style: const TextStyle(
-                color: Colors.white,
-                fontSize: 16,
-                fontWeight: FontWeight.w700)),
+        Text(
+          title,
+          style: const TextStyle(
+              color: Colors.white,
+              fontSize: 16,
+              fontWeight: FontWeight.w700),
+        ),
       ],
     );
   }
 
-  Widget _toggleRow({
+  Widget _toggle({
     required String title,
     required String subtitle,
     required bool value,
@@ -311,41 +410,57 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
-  Widget _accountHeader() {
-  return Row(
-    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-    children: [
-      const Row(
-        children: [
-          Icon(Icons.person_outline, color: Color(0xFF33B5FF), size: 22),
-          SizedBox(width: 10),
-          Text(
-            "Account",
-            style: TextStyle(
+  Widget _field(String label, String value) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(label,
+            style: const TextStyle(
+                color: Colors.white70,
+                fontWeight: FontWeight.w600,
+                fontSize: 13)),
+        const SizedBox(height: 4),
+        Text(
+          value,
+          style: const TextStyle(
               color: Colors.white,
-              fontSize: 16,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-        ],
-      ),
+              fontSize: 15,
+              fontWeight: FontWeight.w700),
+        ),
+      ],
+    );
+  }
 
-      // ---- EDIT BUTTON NOW WORKS ----
-      GestureDetector(
-        onTap: () {
-          Navigator.pushNamed(context, "/edit-account");
-        },
-        child: const Text(
-          "Edit",
-          style: TextStyle(
-            color: Color(0xFF33B5FF),
-            fontWeight: FontWeight.w600,
-            fontSize: 14,
+  Widget _accountHeader() {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: [
+        const Row(
+          children: [
+            Icon(Icons.person_outline,
+                color: Color(0xFF33B5FF), size: 22),
+            SizedBox(width: 10),
+            Text(
+              "Account",
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 16,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ],
+        ),
+        GestureDetector(
+          onTap: () => Navigator.pushNamed(context, "/edit-account"),
+          child: const Text(
+            "Edit",
+            style: TextStyle(
+              color: Color(0xFF33B5FF),
+              fontWeight: FontWeight.w600,
+              fontSize: 14),
           ),
         ),
-      ),
-    ],
-  );
-}
-
+      ],
+    );
+  }
 }

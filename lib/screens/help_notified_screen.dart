@@ -1,160 +1,267 @@
 import 'package:flutter/material.dart';
 import 'package:lucide_icons/lucide_icons.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 class HelpNotifiedScreen extends StatelessWidget {
   final String location;
+  final double? lat;
+  final double? lng;
   final String sentTime;
   final List<Map<String, String>> contacts;
 
   const HelpNotifiedScreen({
     super.key,
     required this.location,
-    this.sentTime = "11:33 AM",
+    this.lat,
+    this.lng,
+    this.sentTime = "Just now",
     this.contacts = const [],
   });
+
+  // -------------------------------------------------------------
+  // OPEN GOOGLE MAP
+  // -------------------------------------------------------------
+  void openMap(double? lat, double? lng) async {
+    if (lat == null || lng == null) return;
+    final url = "https://www.google.com/maps?q=$lat,$lng";
+    await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
+  }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFF0A0F1E),
+      backgroundColor: const Color(0xFF0E1625),
       body: Center(
         child: Container(
-          width: 350,
-          padding: const EdgeInsets.all(24),
+          width: 360,
+          padding: const EdgeInsets.all(26),
           decoration: BoxDecoration(
-            color: const Color(0xFF1F2937).withOpacity(0.35),
+            color: const Color(0xFF111827),
             borderRadius: BorderRadius.circular(22),
-            border: Border.all(color: Colors.white24, width: 1.1),
+            border: Border.all(color: Colors.white12, width: 1),
             boxShadow: [
               BoxShadow(
-                color: Colors.lightBlueAccent.withOpacity(0.1),
-                blurRadius: 28,
-                spreadRadius: 6,
-              )
+                color: Colors.blueAccent.withOpacity(0.25),
+                blurRadius: 35,
+                spreadRadius: 4,
+              ),
             ],
           ),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const Icon(LucideIcons.checkCircle2, size: 70),
+              // SUCCESS ICON
+              Container(
+                padding: const EdgeInsets.all(18),
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: Colors.greenAccent.withOpacity(0.14),
+                ),
+                child: const Icon(
+                  LucideIcons.checkCircle2,
+                  size: 62,
+                  color: Colors.greenAccent,
+                ),
+              ),
+
               const SizedBox(height: 20),
+
+              // TITLE
               const Text(
                 "Help Has Been Notified 💙",
                 textAlign: TextAlign.center,
                 style: TextStyle(
-                  fontSize: 19,
+                  fontSize: 22,
                   fontWeight: FontWeight.w900,
                   color: Colors.white,
-                  letterSpacing: 0.4,
+                  letterSpacing: 0.3,
                 ),
               ),
+
               const SizedBox(height: 12),
+
+              // INFO TEXT
               const Text(
-                "Your emergency contacts have been notified and the location has been shared.",
+                "Your emergency contacts have been alerted.\nLocation was sent successfully.",
                 textAlign: TextAlign.center,
                 style: TextStyle(
                   fontSize: 13,
-                  fontWeight: FontWeight.w700,
                   color: Colors.white70,
                   height: 1.5,
+                  fontWeight: FontWeight.w600,
                 ),
               ),
-              const SizedBox(height: 16),
 
-              // TIME
+              const SizedBox(height: 20),
+
+              // SENT TIME
               Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  const Icon(Icons.access_time, size: 15, color: Colors.white54),
+                  const Icon(Icons.access_time,
+                      size: 16, color: Colors.white60),
                   const SizedBox(width: 6),
-                  Text("Sent at $sentTime",
-                      style: const TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w800,
-                        color: Colors.white60,
-                      ))
+                  Text(
+                    "Sent at $sentTime",
+                    style: const TextStyle(
+                      color: Colors.white60,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
                 ],
               ),
 
-              const SizedBox(height: 6),
+              const SizedBox(height: 22),
 
-              // LOCATION
+              // MAP PREVIEW (FREE, NO API NEEDED)
+              if (lat != null && lng != null)
+                GestureDetector(
+                  onTap: () => openMap(lat, lng),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(16),
+                    child: Container(
+                      height: 170,
+                      width: double.infinity,
+                      decoration: BoxDecoration(
+                        border: Border.all(color: Colors.white12),
+                        color: Colors.black,
+                      ),
+                      child: Stack(
+                        alignment: Alignment.center,
+                        children: [
+                          Image.network(
+                            "https://maps.googleapis.com/maps/api/staticmap"
+                            "?center=$lat,$lng"
+                            "&zoom=16&size=600x300"
+                            "&markers=color:red%7C$lat,$lng"
+                            "&key=YOUR_API_KEY",
+                            fit: BoxFit.cover,
+                            width: double.infinity,
+                            errorBuilder: (_, __, ___) {
+                              return const Center(
+                                child: Text(
+                                  "Map Preview",
+                                  style: TextStyle(
+                                      color: Colors.white54, fontSize: 12),
+                                ),
+                              );
+                            },
+                          ),
+                          Container(
+                            color: Colors.black26,
+                            child: const Icon(
+                              Icons.open_in_new_rounded,
+                              size: 40,
+                              color: Colors.white70,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+
+              const SizedBox(height: 18),
+
+              // LOCATION TEXT
               Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  const Icon(Icons.place, size: 15, color: Colors.redAccent),
-                  const SizedBox(width: 6),
+                  const Icon(Icons.location_on,
+                      size: 18, color: Colors.redAccent),
+                  const SizedBox(width: 8),
                   Expanded(
                     child: Text(
                       location,
                       textAlign: TextAlign.center,
                       style: const TextStyle(
-                        fontSize: 13,
+                        fontSize: 14,
                         fontWeight: FontWeight.w900,
                         color: Colors.white,
                       ),
                     ),
-                  )
+                  ),
                 ],
               ),
 
-              const SizedBox(height: 20),
+              const SizedBox(height: 26),
 
-              // CONTACTS LIST
-              if (contacts.isNotEmpty)
+              // CONTACT LIST
+              if (contacts.isNotEmpty) ...[
+                const Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    "Notified Contacts",
+                    style: TextStyle(
+                      color: Colors.white70,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 10),
+
                 Column(
                   children: contacts.map((c) {
-                    return Padding(
-                      padding: const EdgeInsets.only(bottom: 10),
-                      child: Container(
-                        padding: const EdgeInsets.all(12),
-                        decoration: BoxDecoration(
-                          color: Colors.blueAccent.withOpacity(0.15),
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: Row(
-                          children: [
-                            const Icon(Icons.phone, size: 16, color: Colors.lightBlueAccent),
-                            const SizedBox(width: 10),
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    c['name'] ?? "Unknown",
-                                    style: const TextStyle(
-                                      color: Colors.white,
-                                      fontWeight: FontWeight.w900,
-                                      fontSize: 14,
-                                    ),
+                    return Container(
+                      margin: const EdgeInsets.only(bottom: 12),
+                      padding: const EdgeInsets.all(14),
+                      decoration: BoxDecoration(
+                        color: Colors.blueAccent.withOpacity(0.16),
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                      child: Row(
+                        children: [
+                          const Icon(Icons.phone,
+                              size: 16, color: Colors.lightBlueAccent),
+                          const SizedBox(width: 12),
+
+                          // CONTACT NAME & NUMBER
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  c['name'] ?? "Unknown",
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.w800,
                                   ),
-                                  Text(
-                                    c['number'] ?? "--",
-                                    style: const TextStyle(
-                                      color: Colors.white54,
-                                      fontSize: 12,
-                                      fontWeight: FontWeight.w800,
-                                    ),
+                                ),
+                                const SizedBox(height: 2),
+                                Text(
+                                  c['phone'] ?? "--",
+                                  style: const TextStyle(
+                                    color: Colors.white54,
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w600,
                                   ),
-                                ],
-                              ),
+                                ),
+                              ],
                             ),
-                            const Text("✔ Sent",
-                                style: TextStyle(
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.w900,
-                                  color: Colors.lightBlueAccent,
-                                ))
-                          ],
-                        ),
+                          ),
+
+                          // SENT LABEL
+                          const Text(
+                            "✔ Sent",
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: Colors.lightBlueAccent,
+                              fontWeight: FontWeight.w900,
+                            ),
+                          ),
+                        ],
                       ),
                     );
                   }).toList(),
                 ),
+              ],
 
-              const SizedBox(height: 26),
+              const SizedBox(height: 30),
 
-              // RETURN BUTTON (same as dashboard principle)
+              // BACK BUTTON
               ElevatedButton(
                 onPressed: () {
                   Navigator.pushReplacementNamed(context, '/dashboard');
@@ -163,17 +270,15 @@ class HelpNotifiedScreen extends StatelessWidget {
                   backgroundColor: const Color(0xFF2563EB),
                   foregroundColor: Colors.white,
                   padding: const EdgeInsets.symmetric(vertical: 14),
-                  minimumSize: const Size(double.infinity, 50),
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(14),
                   ),
-                  elevation: 6,
                 ),
                 child: const Text(
                   "Return to Dashboard",
                   style: TextStyle(
-                    fontSize: 14,
                     fontWeight: FontWeight.w900,
+                    fontSize: 14,
                     letterSpacing: 0.3,
                   ),
                 ),

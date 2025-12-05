@@ -1,18 +1,190 @@
 import 'package:flutter/material.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
-class EditContactScreen extends StatelessWidget {
+class EditContactScreen extends StatefulWidget {
   const EditContactScreen({super.key});
 
   @override
+  State<EditContactScreen> createState() => _EditContactScreenState();
+}
+
+class _EditContactScreenState extends State<EditContactScreen> {
+  final TextEditingController nameController = TextEditingController();
+  final TextEditingController phoneController = TextEditingController();
+  final TextEditingController emailController = TextEditingController();
+  final TextEditingController relationController = TextEditingController();
+
+  String caregiverId = "";
+  String contactId = "";
+  bool loading = true;
+  bool saving = false;
+
+  @override
+  void initState() {
+    super.initState();
+    // Wait until context exists, then read arguments
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _loadFromArgs();
+    });
+  }
+
+  Future<void> _loadFromArgs() async {
+    final args =
+        ModalRoute.of(context)?.settings.arguments as Map<String, dynamic>?;
+
+    contactId = args?["contactId"] ?? "";
+    nameController.text = args?["name"] ?? "";
+    phoneController.text = args?["phone"] ?? "";
+    emailController.text = args?["email"] ?? "";
+    relationController.text = args?["relation"] ?? "";
+
+    final prefs = await SharedPreferences.getInstance();
+    caregiverId = prefs.getString("caregiverId") ?? "";
+
+    setState(() => loading = false);
+  }
+
+  Future<void> _saveChanges() async {
+    if (caregiverId.isEmpty || contactId.isEmpty) return;
+
+    final name = nameController.text.trim();
+    final phone = phoneController.text.trim();
+    final email = emailController.text.trim();
+    final relation = relationController.text.trim();
+
+    if (name.isEmpty || phone.isEmpty || relation.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content:
+              Text("Name, phone, and relationship are required."),
+          backgroundColor: Colors.redAccent,
+        ),
+      );
+      return;
+    }
+
+    setState(() => saving = true);
+
+    try {
+      await FirebaseFirestore.instance
+          .collection("caregivers")
+          .doc(caregiverId)
+          .collection("contacts")
+          .doc(contactId)
+          .update({
+        "name": name,
+        "phone": phone,
+        "email": email,
+        "relation": relation,
+        "updated_at": FieldValue.serverTimestamp(),
+      });
+
+      if (!mounted) return;
+      Navigator.pop(context);
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text("Failed to save changes."),
+          backgroundColor: Colors.redAccent,
+        ),
+      );
+    }
+
+    if (mounted) setState(() => saving = false);
+  }
+
+  Future<void> _deleteContact() async {
+    if (caregiverId.isEmpty || contactId.isEmpty) return;
+
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF162233),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+        ),
+        title: const Center(
+          child: Text(
+            "Delete Contact?",
+            style: TextStyle(
+              color: Colors.white,
+              fontWeight: FontWeight.w700,
+              fontSize: 18,
+            ),
+          ),
+        ),
+        content: const Text(
+          "This emergency contact will be permanently removed.",
+          textAlign: TextAlign.center,
+          style: TextStyle(color: Colors.white70, fontSize: 13),
+        ),
+        actionsAlignment: MainAxisAlignment.center,
+        actions: [
+          GestureDetector(
+            onTap: () => Navigator.pop(context, true),
+            child: Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(vertical: 14),
+              decoration: BoxDecoration(
+                color: Colors.redAccent,
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: const Center(
+                child: Text(
+                  "Delete Contact",
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 10),
+          GestureDetector(
+            onTap: () => Navigator.pop(context, false),
+            child: Container(
+              padding: const EdgeInsets.symmetric(vertical: 14),
+              decoration: BoxDecoration(
+                color: const Color(0xFF223247),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: const Center(
+                child: Text(
+                  "Cancel",
+                  style: TextStyle(color: Colors.white70),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm != true) return;
+
+    await FirebaseFirestore.instance
+        .collection("caregivers")
+        .doc(caregiverId)
+        .collection("contacts")
+        .doc(contactId)
+        .delete();
+
+    if (!mounted) return;
+    Navigator.pop(context);
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final TextEditingController nameController =
-        TextEditingController(text: "John Doe");
-    final TextEditingController phoneController =
-        TextEditingController(text: "(555) 123-4567");
-    final TextEditingController emailController =
-        TextEditingController(text: "john.doe@email.com");
-    final TextEditingController relationController =
-        TextEditingController(text: "Son");
+    if (loading) {
+      return const Scaffold(
+        backgroundColor: Color(0xFF0E1625),
+        body: Center(
+          child: CircularProgressIndicator(color: Color(0xFF33B5FF)),
+        ),
+      );
+    }
 
     return Scaffold(
       backgroundColor: const Color(0xFF0E1625),
@@ -22,7 +194,7 @@ class EditContactScreen extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // ---------------- TOP BAR ----------------
+              // TOP BAR
               Row(
                 children: [
                   IconButton(
@@ -41,16 +213,14 @@ class EditContactScreen extends StatelessWidget {
                   ),
                 ],
               ),
-
               const SizedBox(height: 6),
               const Text(
                 "Update emergency contact information",
                 style: TextStyle(color: Colors.white70, fontSize: 13),
               ),
-
               const SizedBox(height: 20),
 
-              // ---------------- MAIN CARD ----------------
+              // MAIN CARD
               Container(
                 width: double.infinity,
                 padding: const EdgeInsets.all(18),
@@ -72,30 +242,23 @@ class EditContactScreen extends StatelessWidget {
                     const SizedBox(height: 4),
                     const Text(
                       "Update the contact's personal details",
-                      style: TextStyle(color: Colors.white54, fontSize: 13),
+                      style:
+                          TextStyle(color: Colors.white54, fontSize: 13),
                     ),
-
                     const SizedBox(height: 18),
 
-                    // Full Name
                     _label("Full Name *"),
                     _inputField(controller: nameController),
-
                     const SizedBox(height: 16),
 
-                    // Phone Number
                     _label("Phone Number *"),
                     _inputField(controller: phoneController),
-
                     const SizedBox(height: 16),
 
-                    // Email
                     _label("Email Address"),
                     _inputField(controller: emailController),
-
                     const SizedBox(height: 16),
 
-                    // Relationship
                     _label("Relationship *"),
                     _inputField(controller: relationController),
                   ],
@@ -104,24 +267,26 @@ class EditContactScreen extends StatelessWidget {
 
               const SizedBox(height: 20),
 
-              // ---------------- BUTTONS ROW ----------------
+              // BUTTONS
               Row(
                 children: [
                   Expanded(
                     child: GestureDetector(
-                      onTap: () {},
+                      onTap: saving ? null : _saveChanges,
                       child: Container(
-                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        padding:
+                            const EdgeInsets.symmetric(vertical: 14),
                         decoration: BoxDecoration(
                           color: const Color(0xFF33B5FF),
                           borderRadius: BorderRadius.circular(10),
                         ),
-                        child: const Center(
+                        child: Center(
                           child: Text(
-                            "Save Changes",
-                            style: TextStyle(
-                                color: Colors.black87,
-                                fontWeight: FontWeight.w600),
+                            saving ? "Saving..." : "Save Changes",
+                            style: const TextStyle(
+                              color: Colors.black87,
+                              fontWeight: FontWeight.w600,
+                            ),
                           ),
                         ),
                       ),
@@ -130,9 +295,10 @@ class EditContactScreen extends StatelessWidget {
                   const SizedBox(width: 12),
                   Expanded(
                     child: GestureDetector(
-                      onTap: () {},
+                      onTap: _deleteContact,
                       child: Container(
-                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        padding:
+                            const EdgeInsets.symmetric(vertical: 14),
                         decoration: BoxDecoration(
                           borderRadius: BorderRadius.circular(10),
                           border: Border.all(color: Colors.redAccent),
@@ -154,7 +320,7 @@ class EditContactScreen extends StatelessWidget {
 
               const SizedBox(height: 24),
 
-              // ---------------- TIPS CARD ----------------
+              // TIPS CARD
               Container(
                 width: double.infinity,
                 padding: const EdgeInsets.all(18),
@@ -173,19 +339,14 @@ class EditContactScreen extends StatelessWidget {
                           fontWeight: FontWeight.w700),
                     ),
                     SizedBox(height: 10),
-
-                    _bullet("• Ensure phone numbers are current and reachable"),
+                    _Bullet(
+                        "• Ensure phone numbers are current and reachable"),
                     SizedBox(height: 6),
-
-                    _bullet("• Use complete names for easy identification"),
+                    _Bullet(
+                        "• Use complete names for easy identification"),
                     SizedBox(height: 6),
-
-                    _bullet(
+                    _Bullet(
                         "• Keep relationship descriptions clear and specific"),
-                    SizedBox(height: 6),
-
-                    _bullet(
-                        "• Your contact details must be validated in emergencies"),
                   ],
                 ),
               ),
@@ -197,8 +358,6 @@ class EditContactScreen extends StatelessWidget {
       ),
     );
   }
-
-  // -------------------- UI HELPERS ----------------------
 
   Widget _label(String text) {
     return Padding(
@@ -230,10 +389,9 @@ class EditContactScreen extends StatelessWidget {
   }
 }
 
-// ---------------- Bullet Point ------------------
-class _bullet extends StatelessWidget {
+class _Bullet extends StatelessWidget {
   final String text;
-  const _bullet(this.text);
+  const _Bullet(this.text);
 
   @override
   Widget build(BuildContext context) {

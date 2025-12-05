@@ -1,0 +1,48 @@
+{
+  "project_info": {
+    "project_number": "953407757856",
+    "project_id": "senra-805d0",
+    "storage_bucket": "senra-805d0.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:953407757856:android:82587565b27ff378dea645",
+        "android_client_info": {
+          "package_name": "com.example.senra_app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBrGXzBWIiJUxMf8oNqxXze2vLSUHQFLao"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:953407757856:android:3ae36bbfde8c638cdea645",
+        "android_client_info": {
+          "package_name": "com.example.senraapp"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBrGXzBWIiJUxMf8oNqxXze2vLSUHQFLao"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

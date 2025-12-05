@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class ActivityHistoryScreen extends StatelessWidget {
   const ActivityHistoryScreen({super.key});
@@ -8,12 +10,58 @@ class ActivityHistoryScreen extends StatelessWidget {
     return Scaffold(
       backgroundColor: const Color(0xFF0E1625),
       body: SafeArea(
-        child: SingleChildScrollView(
+        child: FutureBuilder<String?>(
+          future: _getCaregiverId(),
+          builder: (context, snap) {
+            if (!snap.hasData) {
+              return const Center(
+                child: CircularProgressIndicator(color: Colors.blueAccent),
+              );
+            }
+
+            final caregiverId = snap.data;
+            if (caregiverId == null) {
+              return const Center(
+                child: Text("No caregiver account found",
+                    style: TextStyle(color: Colors.white)),
+              );
+            }
+
+            return _buildHistory(context, caregiverId);
+          },
+        ),
+      ),
+    );
+  }
+
+  Future<String?> _getCaregiverId() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString("caregiverId");
+  }
+
+  // ========================= MAIN FIRESTORE STREAM =========================
+  Widget _buildHistory(BuildContext context, String caregiverId) {
+    return StreamBuilder<QuerySnapshot>(
+      stream: FirebaseFirestore.instance
+          .collection("alerts")
+          .where("caregiverId", isEqualTo: caregiverId)
+          .orderBy("timestamp", descending: true)
+          .snapshots(),
+      builder: (context, snap) {
+        if (!snap.hasData) {
+          return const Center(
+            child: CircularProgressIndicator(color: Colors.blueAccent),
+          );
+        }
+
+        final docs = snap.data!.docs;
+
+        return SingleChildScrollView(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // HEADER
+              // HEADER -----------------------------------------------------
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
@@ -37,33 +85,33 @@ class ActivityHistoryScreen extends StatelessWidget {
                     ],
                   ),
 
-                  // CLEAR ALL BUTTON
-                  GestureDetector(
-                    onTap: () => _showClearAllDialog(context),
-                    child: Container(
-                      padding:
-                          const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                      decoration: BoxDecoration(
-                        border: Border.all(color: const Color(0xFF33B5FF)),
-                        borderRadius: BorderRadius.circular(12),
+                  if (docs.isNotEmpty)
+                    GestureDetector(
+                      onTap: () => _showClearAllDialog(context, caregiverId),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 12, vertical: 8),
+                        decoration: BoxDecoration(
+                          border: Border.all(color: const Color(0xFF33B5FF)),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: const Row(
+                          children: [
+                            Icon(Icons.delete_outline,
+                                size: 16, color: Color(0xFF33B5FF)),
+                            SizedBox(width: 6),
+                            Text(
+                              "Clear All",
+                              style: TextStyle(
+                                color: Color(0xFF33B5FF),
+                                fontSize: 14,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            )
+                          ],
+                        ),
                       ),
-                      child: Row(
-                        children: const [
-                          Icon(Icons.delete_outline,
-                              size: 16, color: Color(0xFF33B5FF)),
-                          SizedBox(width: 6),
-                          Text(
-                            "Clear All",
-                            style: TextStyle(
-                              color: Color(0xFF33B5FF),
-                              fontSize: 14,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          )
-                        ],
-                      ),
-                    ),
-                  )
+                    )
                 ],
               ),
 
@@ -75,70 +123,67 @@ class ActivityHistoryScreen extends StatelessWidget {
 
               const SizedBox(height: 22),
 
-              // ACTIVITY CARDS -------------------------
-              _activityCard(
-                context,
-                type: "Fall Detected",
-                icon: Icons.warning_amber_rounded,
-                iconColor: Colors.redAccent,
-                status: "Alert Sent",
-                time: "2024-01-15 14:23",
-                address: "123 Main Street, San Francisco, CA",
-                contacts: ["John Doe", "Jane Smith"],
-                note: null,
-              ),
+              if (docs.isEmpty)
+                const Center(
+                  child: Padding(
+                    padding: EdgeInsets.only(top: 80),
+                    child: Text(
+                      "No activity yet.",
+                      style: TextStyle(color: Colors.white54, fontSize: 14),
+                    ),
+                  ),
+                ),
 
-              const SizedBox(height: 16),
+              ...docs.map((doc) {
+                final data = doc.data() as Map<String, dynamic>;
+                final timestamp = _formatTimestamp(data["timestamp"]);
+                final location = data["location"] ?? "Unknown location";
 
-              _activityCard(
-                context,
-                type: "Manual SOS",
-                icon: Icons.phone_in_talk_rounded,
-                iconColor: Colors.lightBlueAccent,
-                status: "Cancelled",
-                time: "2024-01-14 09:15",
-                address: "456 Oak Avenue, San Francisco, CA",
-                contacts: [],
-                note:
-                    "User confirmed they were safe before alert was sent",
-              ),
+                final type = data["fallType"] ?? "Fall Detected";
 
-              const SizedBox(height: 16),
-
-              _activityCard(
-                context,
-                type: "Fall Detected",
-                icon: Icons.warning_amber_rounded,
-                iconColor: Colors.redAccent,
-                status: "Alert Sent",
-                time: "2024-01-12 16:45",
-                address: "789 Pine Street, San Francisco, CA",
-                contacts: ["John Doe", "Emergency Services"],
-                note: null,
-              ),
-
-              const SizedBox(height: 40),
+                return Column(
+                  children: [
+                    _activityCard(
+                      context,
+                      docId: doc.id,
+                      type: type,
+                      status: "Fall Alert",
+                      time: timestamp,
+                      address: location,
+                      lat: data["lat"],
+                      lng: data["lng"],
+                    ),
+                    const SizedBox(height: 16),
+                  ],
+                );
+              }).toList(),
             ],
           ),
-        ),
-      ),
+        );
+      },
     );
   }
 
-  // ---------------------------------------------------------------------
-  // ACTIVITY CARD WIDGET (Matches Figma perfectly)
-  // ---------------------------------------------------------------------
+  // ========================= TIMESTAMP FORMATTER =========================
+  String _formatTimestamp(dynamic value) {
+    if (value is Timestamp) {
+      final dt = value.toDate();
+      return "${dt.year}-${dt.month.toString().padLeft(2, '0')}-${dt.day.toString().padLeft(2, '0')}  "
+          "${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}";
+    }
+    return "Unknown time";
+  }
 
+  // ========================= ACTIVITY CARD =========================
   Widget _activityCard(
     BuildContext context, {
+    required String docId,
     required String type,
-    required IconData icon,
-    required Color iconColor,
     required String status,
     required String time,
     required String address,
-    required List<String> contacts,
-    String? note,
+    double? lat,
+    double? lng,
   }) {
     return Container(
       padding: const EdgeInsets.all(18),
@@ -149,13 +194,13 @@ class ActivityHistoryScreen extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // TITLE ROW with Delete Button
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               Row(
                 children: [
-                  Icon(icon, color: iconColor, size: 22),
+                  const Icon(Icons.warning_amber_rounded,
+                      color: Colors.redAccent, size: 22),
                   const SizedBox(width: 10),
                   Text(type,
                       style: const TextStyle(
@@ -164,39 +209,37 @@ class ActivityHistoryScreen extends StatelessWidget {
                           fontWeight: FontWeight.w700)),
                 ],
               ),
-              Text(status,
-                  style: TextStyle(
-                    color: status == "Alert Sent"
-                        ? Colors.lightBlueAccent
-                        : Colors.white54,
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
-                  )),
               GestureDetector(
-                onTap: () => _showDeleteDialog(context),
+                onTap: () => _showDeleteDialog(context, docId),
                 child: const Icon(Icons.delete_outline,
                     color: Colors.white54, size: 20),
               ),
             ],
           ),
 
-          const SizedBox(height: 14),
+          const SizedBox(height: 12),
 
-          // TIME
+          Text(status,
+              style: const TextStyle(
+                color: Colors.lightBlueAccent,
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+              )),
+
+          const SizedBox(height: 12),
+
           Row(
             children: [
               const Icon(Icons.access_time,
                   color: Colors.white54, size: 18),
               const SizedBox(width: 6),
               Text(time,
-                  style: const TextStyle(
-                      color: Colors.white70, fontSize: 13)),
+                  style: const TextStyle(color: Colors.white70, fontSize: 13)),
             ],
           ),
 
-          const SizedBox(height: 14),
+          const SizedBox(height: 12),
 
-          // ADDRESS
           Row(
             children: [
               const Icon(Icons.location_on,
@@ -210,167 +253,95 @@ class ActivityHistoryScreen extends StatelessWidget {
             ],
           ),
 
-          if (contacts.isNotEmpty) ...[
-            const SizedBox(height: 16),
-            const Text("Contacts Notified:",
-                style:
-                    TextStyle(color: Colors.white70, fontSize: 13)),
-            const SizedBox(height: 8),
-
-            Wrap(
-              spacing: 8,
-              children: contacts
-                  .map(
-                    (c) => Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 12, vertical: 6),
-                      decoration: BoxDecoration(
-                        color: Colors.white10,
-                        borderRadius: BorderRadius.circular(20),
-                      ),
-                      child: Text(
-                        c,
-                        style: const TextStyle(
-                            color: Colors.white70, fontSize: 12),
-                      ),
-                    ),
-                  )
-                  .toList(),
-            )
-          ],
-
-          if (note != null) ...[
-            const SizedBox(height: 16),
+          if (lat != null && lng != null) ...[
+            const SizedBox(height: 10),
             Text(
-              note,
-              style:
-                  const TextStyle(color: Colors.white70, fontSize: 13),
+              "GPS: $lat, $lng",
+              style: const TextStyle(color: Colors.white38, fontSize: 12),
             ),
-          ]
+          ],
         ],
       ),
     );
   }
 
-  // ---------------------------------------------------------------------
-  // DELETE ONE ACTIVITY DIALOG
-  // ---------------------------------------------------------------------
-
-  void _showDeleteDialog(BuildContext context) {
+  // ========================= DELETE SINGLE =========================
+  void _showDeleteDialog(BuildContext context, String docId) {
     showDialog(
       context: context,
-      builder: (context) => AlertDialog(
+      builder: (_) => AlertDialog(
         backgroundColor: const Color(0xFF162233),
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(16),
         ),
-        title: const Center(
-          child: Text("Delete Activity?",
-              style: TextStyle(
-                  color: Colors.white,
-                  fontWeight: FontWeight.w700,
-                  fontSize: 18)),
-        ),
+        title: const Text("Delete Activity?",
+            textAlign: TextAlign.center,
+            style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700)),
         content: const Text(
-          "This will permanently delete this activity record.\nThis action cannot be undone.",
+          "This will permanently delete this activity.",
           textAlign: TextAlign.center,
-          style: TextStyle(color: Colors.white70, fontSize: 13),
+          style: TextStyle(color: Colors.white70),
         ),
-        actionsAlignment: MainAxisAlignment.center,
         actions: [
-          // DELETE BUTTON
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.symmetric(vertical: 14),
-            decoration: BoxDecoration(
-              color: Colors.redAccent,
-              borderRadius: BorderRadius.circular(10),
-            ),
-            child: const Center(
-              child: Text("Delete",
-                  style: TextStyle(
-                      color: Colors.white,
-                      fontWeight: FontWeight.w600)),
-            ),
+          TextButton(
+            onPressed: () {
+              FirebaseFirestore.instance
+                  .collection("alerts")
+                  .doc(docId)
+                  .delete();
+              Navigator.pop(context);
+            },
+            child: const Text("Delete",
+                style: TextStyle(color: Colors.redAccent)),
           ),
-
-          const SizedBox(height: 10),
-
-          // CANCEL
-          GestureDetector(
-            onTap: () => Navigator.pop(context),
-            child: Container(
-              padding: const EdgeInsets.symmetric(vertical: 14),
-              decoration: BoxDecoration(
-                color: const Color(0xFF223247),
-                borderRadius: BorderRadius.circular(10),
-              ),
-              child: const Center(
-                child: Text("Cancel",
-                    style: TextStyle(color: Colors.white70)),
-              ),
-            ),
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child:
+                const Text("Cancel", style: TextStyle(color: Colors.white70)),
           ),
         ],
       ),
     );
   }
 
-  // ---------------------------------------------------------------------
-  // CLEAR ALL HISTORY DIALOG
-  // ---------------------------------------------------------------------
-
-  void _showClearAllDialog(BuildContext context) {
+  // ========================= CLEAR ALL =========================
+  void _showClearAllDialog(BuildContext context, String caregiverId) {
     showDialog(
       context: context,
-      builder: (context) => AlertDialog(
+      builder: (_) => AlertDialog(
         backgroundColor: const Color(0xFF162233),
         shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16)),
-        title: const Center(
-          child: Text("Clear All History?",
-              style: TextStyle(
-                  color: Colors.white,
-                  fontWeight: FontWeight.w700,
-                  fontSize: 18)),
+          borderRadius: BorderRadius.circular(16),
         ),
+        title: const Text("Clear All History?",
+            textAlign: TextAlign.center,
+            style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700)),
         content: const Text(
-          "This will permanently delete all activity history.\nThis action cannot be undone.",
+          "This will delete all activity history.",
           textAlign: TextAlign.center,
-          style: TextStyle(color: Colors.white70, fontSize: 13),
+          style: TextStyle(color: Colors.white70),
         ),
-        actionsAlignment: MainAxisAlignment.center,
         actions: [
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.symmetric(vertical: 14),
-            decoration: BoxDecoration(
-              color: Colors.redAccent,
-              borderRadius: BorderRadius.circular(10),
-            ),
-            child: const Center(
-              child: Text("Delete All",
-                  style: TextStyle(
-                      color: Colors.white,
-                      fontWeight: FontWeight.w600)),
-            ),
+          TextButton(
+            onPressed: () async {
+              final snap = await FirebaseFirestore.instance
+                  .collection("alerts")
+                  .where("caregiverId", isEqualTo: caregiverId)
+                  .get();
+
+              for (var doc in snap.docs) {
+                await doc.reference.delete();
+              }
+
+              Navigator.pop(context);
+            },
+            child: const Text("Delete All",
+                style: TextStyle(color: Colors.redAccent)),
           ),
-
-          const SizedBox(height: 10),
-
-          GestureDetector(
-            onTap: () => Navigator.pop(context),
-            child: Container(
-              padding: const EdgeInsets.symmetric(vertical: 14),
-              decoration: BoxDecoration(
-                color: const Color(0xFF223247),
-                borderRadius: BorderRadius.circular(10),
-              ),
-              child: const Center(
-                child: Text("Cancel",
-                    style: TextStyle(color: Colors.white70)),
-              ),
-            ),
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child:
+                const Text("Cancel", style: TextStyle(color: Colors.white70)),
           ),
         ],
       ),
