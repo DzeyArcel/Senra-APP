@@ -18,9 +18,9 @@ class _ManageDeviceScreenState extends State<ManageDeviceScreen> {
     _loadPairedDevice();
   }
 
-  // ---------------------------------------------------------
-  // LOAD DEVICE FROM SHAREDPREFS (Senra ecosystem)
-  // ---------------------------------------------------------
+  // ==========================================================
+  // Load paired device ID
+  // ==========================================================
   Future<void> _loadPairedDevice() async {
     final prefs = await SharedPreferences.getInstance();
     final paired = prefs.getString("pairedDevice");
@@ -30,9 +30,9 @@ class _ManageDeviceScreenState extends State<ManageDeviceScreen> {
     }
   }
 
-  // ---------------------------------------------------------
-  // UNLINK DEVICE — resets both caregiver + device
-  // ---------------------------------------------------------
+  // ==========================================================
+  // Unlink device
+  // ==========================================================
   Future<void> _unlinkDevice() async {
     if (deviceId == null) return;
 
@@ -41,37 +41,39 @@ class _ManageDeviceScreenState extends State<ManageDeviceScreen> {
 
     if (caregiverId == null) return;
 
-    // caregiver → reset pairedDevice
+    // Remove paired device from caregiver
     await FirebaseFirestore.instance
         .collection("caregivers")
         .doc(caregiverId)
         .update({"pairedDevice": ""});
 
-    // device → reset paired_to
+    // Remove paired_to from device
     await FirebaseFirestore.instance
         .collection("devices")
         .doc(deviceId)
         .update({"paired_to": ""});
 
-    // clear session
     await prefs.setString("pairedDevice", "");
 
     if (!mounted) return;
 
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(
-        content: Text("Device unlinked successfully"),
+        content: Text("Device has been unlinked."),
         backgroundColor: Colors.redAccent,
       ),
     );
 
     Navigator.pushNamedAndRemoveUntil(
-        context, "/device-pairing", (route) => false);
+      context,
+      "/device-pairing",
+      (route) => false,
+    );
   }
 
-  // ---------------------------------------------------------
-  // REQUEST WIFI RESET
-  // ---------------------------------------------------------
+  // ==========================================================
+  // Change WiFi
+  // ==========================================================
   Future<void> _changeWifi() async {
     if (deviceId == null) return;
 
@@ -83,17 +85,17 @@ class _ManageDeviceScreenState extends State<ManageDeviceScreen> {
     Navigator.pushNamed(context, "/wifi-config");
   }
 
-  // ---------------------------------------------------------
-  // TIME → readable format
-  // ---------------------------------------------------------
-  String _timeAgo(dynamic val) {
-    if (val == null) return "Unknown";
+  // ==========================================================
+  // Format time
+  // ==========================================================
+  String _timeAgo(dynamic value) {
+    if (value == null) return "—";
 
     DateTime? dt;
-    if (val is Timestamp) dt = val.toDate();
-    if (val is String) dt = DateTime.tryParse(val);
+    if (value is Timestamp) dt = value.toDate();
+    if (value is String) dt = DateTime.tryParse(value);
 
-    if (dt == null) return "Unknown";
+    if (dt == null) return "—";
 
     final minutes = DateTime.now().difference(dt).inMinutes;
     if (minutes < 1) return "Just now";
@@ -108,7 +110,7 @@ class _ManageDeviceScreenState extends State<ManageDeviceScreen> {
         backgroundColor: Color(0xFF0E1625),
         body: Center(
           child: Text(
-            "No paired device found",
+            "No paired Senra device.",
             style: TextStyle(color: Colors.white70),
           ),
         ),
@@ -129,26 +131,18 @@ class _ManageDeviceScreenState extends State<ManageDeviceScreen> {
             );
           }
 
-          final raw = snapshot.data!.data() as Map<String, dynamic>? ?? {};
+          final raw =
+              snapshot.data!.data() as Map<String, dynamic>? ?? {};
 
-          // -----------------------------------------------------
-          // SAFE FIRESTORE READS
-          // -----------------------------------------------------
-          final name = raw["device_name"] ?? "Senra Device";
+          // Safe field reads
+          final name = raw["device_name"] ?? "Senra Wearable";
           final firmware = raw["firmware"] ?? "v1.0.0";
-
-          // battery
-          final battery = raw["batteryLevel"] ??
-              raw["battery"] ??
-              0;
-
-          // last sync
+          final battery =
+              raw["batteryLevel"] ?? raw["battery"] ?? 0;
+          final signal = raw["signal"]?.toString() ?? "—";
           final lastSyncText = _timeAgo(raw["lastSync"]);
 
-          // signal strength (GSM)
-          final signal = raw["signal"]?.toString() ?? "Unknown";
-
-          // online rule — 20 seconds
+          // Online rule
           bool online = false;
           if (raw["lastSync"] != null) {
             DateTime? dt;
@@ -162,18 +156,18 @@ class _ManageDeviceScreenState extends State<ManageDeviceScreen> {
             }
           }
 
-          // -----------------------------------------------------
-          // UI
-          // -----------------------------------------------------
           return SafeArea(
             child: SingleChildScrollView(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              padding: const EdgeInsets.symmetric(
+                horizontal: 18,
+                vertical: 14,
+              ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-
+                  // ======================================================
                   // HEADER
+                  // ======================================================
                   Row(
                     children: [
                       IconButton(
@@ -181,7 +175,6 @@ class _ManageDeviceScreenState extends State<ManageDeviceScreen> {
                         icon: const Icon(Icons.arrow_back,
                             color: Colors.white70),
                       ),
-                      const SizedBox(width: 6),
                       const Text(
                         "Manage Device",
                         style: TextStyle(
@@ -195,211 +188,74 @@ class _ManageDeviceScreenState extends State<ManageDeviceScreen> {
 
                   const SizedBox(height: 20),
 
-                  // DEVICE INFO
-                  Container(
-                    padding: const EdgeInsets.all(18),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF162233),
-                      borderRadius: BorderRadius.circular(14),
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-
-                        Row(
-                          children: const [
-                            Icon(Icons.watch_outlined,
-                                color: Color(0xFF33B5FF), size: 22),
-                            SizedBox(width: 10),
-                            Text(
-                              "Device Information",
-                              style: TextStyle(
-                                color: Colors.white,
-                                fontSize: 16,
-                                fontWeight: FontWeight.w700,
-                              ),
-                            ),
-                          ],
-                        ),
-
-                        const SizedBox(height: 18),
-                        Container(height: 1, color: Colors.white12),
-                        const SizedBox(height: 18),
-
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            _InfoColumn(label: "Device Name", value: name),
-                            _InfoColumn(label: "Device ID", value: deviceId!),
-                          ],
-                        ),
-
-                        const SizedBox(height: 18),
-
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            _InfoColumn(
-                                label: "Battery Level",
-                                value: "$battery%"),
-                            _InfoColumn(
-                                label: "Last Sync", value: lastSyncText),
-                          ],
-                        ),
-                      ],
-                    ),
+                  // ======================================================
+                  // DEVICE INFO CARD
+                  // ======================================================
+                  _card(
+                    title: "Device Information",
+                    icon: Icons.watch_outlined,
+                    children: [
+                      _rowInfo("Device Name", name),
+                      _rowInfo("Device ID", deviceId!),
+                      _rowInfo("Battery Level", "$battery%"),
+                      _rowInfo("Last Sync", lastSyncText),
+                    ],
                   ),
 
                   const SizedBox(height: 22),
 
-                  // CONNECTION STATUS
-                  Container(
-                    padding: const EdgeInsets.all(18),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF162233),
-                      borderRadius: BorderRadius.circular(14),
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-
-                        Row(
-                          children: const [
-                            Icon(Icons.wifi,
-                                color: Color(0xFF33B5FF), size: 22),
-                            SizedBox(width: 10),
-                            Text(
-                              "Connection Status",
-                              style: TextStyle(
-                                color: Colors.white,
-                                fontSize: 16,
-                                fontWeight: FontWeight.w700,
-                              ),
+                  // ======================================================
+                  // CONNECTION STATUS CARD
+                  // ======================================================
+                  _card(
+                    title: "Connection Status",
+                    icon: Icons.wifi,
+                    children: [
+                      _rowInfo(
+                        "Status",
+                        online ? "Online" : "Offline",
+                        valueColor: online
+                            ? Colors.lightGreenAccent
+                            : Colors.redAccent,
+                      ),
+                      const SizedBox(height: 14),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: _btnOutlined(
+                              text: "Change Wi-Fi",
+                              color: const Color(0xFF33B5FF),
+                              onTap: _changeWifi,
                             ),
-                          ],
-                        ),
-
-                        const SizedBox(height: 18),
-                        Container(height: 1, color: Colors.white12),
-                        const SizedBox(height: 18),
-
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            const Text(
-                              "Connected",
-                              style: TextStyle(
-                                  color: Colors.white,
-                                  fontWeight: FontWeight.w600),
-                            ),
-                            Text(
-                              online ? "Active" : "Offline",
-                              style: TextStyle(
-                                color: online
-                                    ? Colors.lightGreenAccent
-                                    : Colors.redAccent,
-                              ),
-                            ),
-                          ],
-                        ),
-
-                        const SizedBox(height: 22),
-
-                        // BUTTONS
-                        Row(
-                          children: [
-                            Expanded(
-                              child: GestureDetector(
-                                onTap: _changeWifi,
-                                child: Container(
-                                  padding: const EdgeInsets.symmetric(
-                                      vertical: 12),
-                                  decoration: BoxDecoration(
-                                    borderRadius: BorderRadius.circular(10),
-                                    border: Border.all(
-                                      color: const Color(0xFF33B5FF),
-                                      width: 1.5,
-                                    ),
-                                  ),
-                                  child: const Center(
-                                    child: Text(
-                                      "Change Wi-Fi",
-                                      style: TextStyle(
-                                        color: Color(0xFF33B5FF),
-                                        fontWeight: FontWeight.w600),
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            ),
-
-                            const SizedBox(width: 12),
-
-                            Expanded(
-                              child: GestureDetector(
-                                onTap: _unlinkDevice,
-                                child: Container(
-                                  padding: const EdgeInsets.symmetric(
-                                      vertical: 12),
-                                  decoration: BoxDecoration(
-                                    borderRadius: BorderRadius.circular(10),
-                                    border: Border.all(
-                                      color: Colors.redAccent,
-                                      width: 1.5,
-                                    ),
-                                  ),
-                                  child: const Center(
-                                    child: Text(
-                                      "Unlink Device",
-                                      style: TextStyle(
-                                        color: Colors.redAccent,
-                                        fontWeight: FontWeight.w600),
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ],
-                    ),
-                  ),
-
-                  const SizedBox(height: 22),
-
-                  // FOOTER
-                  Container(
-                    padding: const EdgeInsets.all(20),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF162233),
-                      borderRadius: BorderRadius.circular(14),
-                    ),
-                    child: Column(
-                      children: [
-                        const Text(
-                          "Device Status",
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontWeight: FontWeight.w700,
-                            fontSize: 16,
                           ),
-                        ),
-                        const SizedBox(height: 18),
-
-                        _InfoColumn(
-                            label: "Signal Strength", value: signal),
-
-                        const SizedBox(height: 14),
-
-                        _InfoColumn(
-                            label: "Firmware Version", value: firmware),
-
-                        const SizedBox(height: 8),
-                      ],
-                    ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: _btnOutlined(
+                              text: "Unlink Device",
+                              color: Colors.redAccent,
+                              onTap: _unlinkDevice,
+                            ),
+                          ),
+                        ],
+                      )
+                    ],
                   ),
 
-                  const SizedBox(height: 50),
+                  const SizedBox(height: 22),
+
+                  // ======================================================
+                  // TECH DETAILS
+                  // ======================================================
+                  _card(
+                    title: "Device Status",
+                    icon: Icons.memory_rounded,
+                    children: [
+                      _rowInfo("Signal Strength", signal),
+                      _rowInfo("Firmware Version", firmware),
+                    ],
+                  ),
+
+                  const SizedBox(height: 60),
                 ],
               ),
             ),
@@ -408,31 +264,96 @@ class _ManageDeviceScreenState extends State<ManageDeviceScreen> {
       ),
     );
   }
-}
 
-// -------------------------------------------------------------
-// REUSABLE COLUMN
-// -------------------------------------------------------------
-class _InfoColumn extends StatelessWidget {
-  final String label;
-  final String value;
+  // ==========================================================
+  // Reusable UI widgets
+  // ==========================================================
 
-  const _InfoColumn({required this.label, required this.value});
+  Widget _card({
+    required String title,
+    required IconData icon,
+    required List<Widget> children,
+  }) {
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: const Color(0xFF162233),
+        borderRadius: BorderRadius.circular(14),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(icon, color: const Color(0xFF33B5FF), size: 22),
+              const SizedBox(width: 10),
+              Text(
+                title,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.w700,
+                  fontSize: 16,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 18),
+          Container(height: 1, color: Colors.white12),
+          const SizedBox(height: 18),
+          ...children,
+        ],
+      ),
+    );
+  }
 
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(label,
-            style: const TextStyle(color: Colors.white54, fontSize: 13)),
-        const SizedBox(height: 4),
-        Text(value,
-            style: const TextStyle(
-                color: Colors.white,
-                fontWeight: FontWeight.w600,
-                fontSize: 14)),
-      ],
+  Widget _rowInfo(String label, String value, {Color valueColor = Colors.white}) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(label,
+              style: const TextStyle(
+                color: Colors.white54,
+                fontSize: 13,
+              )),
+          Text(
+            value,
+            style: TextStyle(
+              color: valueColor,
+              fontWeight: FontWeight.w600,
+              fontSize: 14,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _btnOutlined({
+    required String text,
+    required Color color,
+    required VoidCallback onTap,
+  }) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 12),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: color, width: 1.5),
+        ),
+        child: Center(
+          child: Text(
+            text,
+            style: TextStyle(
+              color: color,
+              fontWeight: FontWeight.w600,
+              fontSize: 14,
+            ),
+          ),
+        ),
+      ),
     );
   }
 }

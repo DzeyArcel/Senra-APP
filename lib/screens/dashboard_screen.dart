@@ -11,7 +11,6 @@ class DashboardScreen extends StatefulWidget {
 }
 
 class _DashboardScreenState extends State<DashboardScreen> {
-  // ============= NEW FALL SYSTEM =============
   StreamSubscription<DocumentSnapshot>? _deviceListener;
   bool _fallScreenOpened = false;
 
@@ -19,7 +18,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
   void initState() {
     super.initState();
 
-    // Start listening after UI loads
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _startDeviceFallListener();
     });
@@ -31,9 +29,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
     super.dispose();
   }
 
-  // ---------------------------------------------------------
-  // 🔥 LISTEN FOR fallDetected ON DEVICE DOCUMENT
-  // ---------------------------------------------------------
+  // ===============================================================
+  // 🔥 REALTIME FALL + ONLINE / OFFLINE LISTENER
+  // ===============================================================
   Future<void> _startDeviceFallListener() async {
     final prefs = await SharedPreferences.getInstance();
     final deviceId = prefs.getString("pairedDevice");
@@ -44,67 +42,95 @@ class _DashboardScreenState extends State<DashboardScreen> {
         .collection("devices")
         .doc(deviceId)
         .snapshots()
-        .listen((snap) {
-      if (!snap.exists || _fallScreenOpened) return;
+        .listen((snap) async {
+      if (!snap.exists) return;
 
       final data = snap.data() as Map<String, dynamic>;
 
-      // SAFE fallDetected read
+      // ------------------------
+      // 1️⃣ ONLINE LOGIC (20s rule)
+      // ------------------------
+      final rawSync = data["lastSync"];
+      DateTime? lastSync;
+      if (rawSync is Timestamp) lastSync = rawSync.toDate();
+      if (rawSync is String) lastSync = DateTime.tryParse(rawSync);
+
+      bool isOnline = false;
+      if (lastSync != null) {
+        isOnline = DateTime.now().difference(lastSync).inSeconds <= 20;
+      }
+
+      // If offline → redirect to device-connected screen
+      if (!isOnline && mounted && !_fallScreenOpened) {
+        Navigator.pushReplacementNamed(context, "/device-connected");
+        return;
+      }
+
+      // ------------------------
+      // 2️⃣ FALL DETECTION
+      // ------------------------
       bool fallDetected = false;
       final rawFall = data["fallDetected"];
-
       if (rawFall is bool) fallDetected = rawFall;
       if (rawFall is Map && rawFall["booleanValue"] is bool) {
         fallDetected = rawFall["booleanValue"];
       }
 
-      if (!fallDetected) return;
+      if (!fallDetected || _fallScreenOpened) return;
 
-      // Prevent double navigation
       _fallScreenOpened = true;
 
-      // Extract location text
+      // ------------------------
+      // LOCATION
+      // ------------------------
       final lat = data["lat"];
       final lng = data["lng"];
-      final locationText =
-          (lat != null && lng != null) ? "Lat: $lat, Lng: $lng" : "Location not ready";
+      final readableLocation =
+          (lat != null && lng != null) ? "Lat: $lat, Lng: $lng" : "Unknown location";
 
-      final mapURL = "https://www.google.com/maps?q=${lat ?? ''},${lng ?? ''}";
+      // ------------------------
+      // Extract contacts (if firmware sends them)
+      // ------------------------
+      List<Map<String, String>> contacts = [];
+      if (data["contacts"] is List) {
+        contacts = (data["contacts"] as List)
+            .map((x) => Map<String, String>.from(x))
+            .toList();
+      }
 
-      // Navigate to your alert screen
+      // ------------------------
+      // Go to Alert Screen
+      // ------------------------
       Navigator.pushNamed(
         context,
         "/alert",
         arguments: {
           "deviceId": deviceId,
-          "location": locationText,
-          "mapURL": mapURL,
+          "location": readableLocation,
+          "lat": lat,
+          "lng": lng,
+          "mapURL": "https://www.google.com/maps?q=$lat,$lng",
+          "contacts": contacts,
+          "fallType": "Fall Detected",
         },
-      ).then((_) {
-        // Allow next alerts
+      ).then((_) async {
         _fallScreenOpened = false;
+
+        // Reset fallDetected automatically
+        await FirebaseFirestore.instance
+            .collection("devices")
+            .doc(deviceId)
+            .update({"fallDetected": false});
       });
     });
   }
 
-  // ---------------------------------------------------------
-  // GET CAREGIVER → DEVICE ID
-  // ---------------------------------------------------------
+  // ===============================================================
+  // GET DEVICE ID
+  // ===============================================================
   Future<String?> _getPairedDeviceId() async {
     final prefs = await SharedPreferences.getInstance();
-    final caregiverId = prefs.getString("caregiverId");
-
-    if (caregiverId == null || caregiverId.isEmpty) return null;
-
-    final doc = await FirebaseFirestore.instance
-        .collection("caregivers")
-        .doc(caregiverId)
-        .get();
-
-    if (!doc.exists) return null;
-
-    final pairedDevice = doc.data()?["pairedDevice"];
-    return pairedDevice == "" ? null : pairedDevice;
+    return prefs.getString("pairedDevice");
   }
 
   @override
@@ -114,15 +140,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
       builder: (context, snap) {
         if (!snap.hasData) return _loading();
         if (snap.data == null) return _noDevice();
-
         return _dashboard(context, snap.data!);
       },
     );
   }
 
-  // ---------------------------------------------------------
+  // ===============================================================
   // MAIN DASHBOARD UI
-  // ---------------------------------------------------------
+  // ===============================================================
   Widget _dashboard(BuildContext context, String deviceId) {
     return Scaffold(
       backgroundColor: const Color(0xFF0E1625),
@@ -174,38 +199,28 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     .snapshots(),
                 builder: (context, snap) {
                   if (!snap.hasData) return _statusLoadingCard();
-
                   final raw = snap.data!.data() as Map<String, dynamic>?;
 
                   if (raw == null) return _noDeviceDataCard();
 
                   // Battery
-                  final int battery =
-                      raw["batteryLevel"] ?? raw["battery"] ?? 0;
+                  final int battery = raw["batteryLevel"] ?? raw["battery"] ?? 0;
 
-                  // Online detection by lastSync
+                  // Online
                   bool online = false;
-                  final lastSyncRaw = raw["lastSync"];
-                  DateTime? lastSync;
+                  final syncRaw = raw["lastSync"];
+                  DateTime? dt;
+                  if (syncRaw is Timestamp) dt = syncRaw.toDate();
+                  if (syncRaw is String) dt = DateTime.tryParse(syncRaw);
 
-                  if (lastSyncRaw is Timestamp) {
-                    lastSync = lastSyncRaw.toDate();
-                  } else if (lastSyncRaw is String) {
-                    lastSync = DateTime.tryParse(lastSyncRaw);
+                  if (dt != null) {
+                    online = DateTime.now().difference(dt).inSeconds <= 20;
                   }
 
-                  if (lastSync != null) {
-                    final diff =
-                        DateTime.now().difference(lastSync).inSeconds;
-                    online = diff <= 20;
-                  }
+                  final lastSyncText = _formatTime(syncRaw);
 
-                  final String lastSyncText = _formatTime(lastSyncRaw);
-
-                  // fallDetected for small UI notification (not navigation)
-                  bool fallDetected = false;
-                  final rawFall = raw["fallDetected"];
-                  if (rawFall is bool) fallDetected = rawFall;
+                  // small red tag if fallDetected
+                  bool fallDetected = raw["fallDetected"] == true;
 
                   return _statusCard(
                     online: online,
@@ -219,8 +234,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
               const SizedBox(height: 26),
 
               _quickAccess(context),
-
-              const SizedBox(height: 30),
             ],
           ),
         ),
@@ -228,14 +241,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
-  //---------------------------------------------------------
-  // TIME FORMATTER
-  //---------------------------------------------------------
+  // ===============================================================
+  // FORMAT TIME
+  // ===============================================================
   String _formatTime(dynamic value) {
     DateTime? dt;
-
-    if (value is String) dt = DateTime.tryParse(value);
     if (value is Timestamp) dt = value.toDate();
+    if (value is String) dt = DateTime.tryParse(value);
 
     if (dt == null) return "Unknown";
 
@@ -243,14 +255,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
     if (diff.inSeconds < 60) return "Just now";
     if (diff.inMinutes < 60) return "${diff.inMinutes} min ago";
-    if (diff.inHours < 24) return "${diff.inHours} hours ago";
-
+    if (diff.inHours < 24) return "${diff.inHours} hr ago";
     return "${diff.inDays} days ago";
   }
 
-  // ---------------------------------------------------------
-  // STATUS CARD UI
-  // ---------------------------------------------------------
+  // ===============================================================
+  // UI CARDS
+  // ===============================================================
   Widget _statusCard({
     required bool online,
     required int battery,
@@ -363,29 +374,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
             ],
           ),
 
-          const SizedBox(height: 18),
-
-          Container(
-            height: 36,
-            decoration: BoxDecoration(
-              color: const Color(0xFF1B2A3A),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-              children: [
-                Text("● Wearable",
-                    style: TextStyle(
-                      color: Colors.white.withOpacity(0.55),
-                      fontSize: 12,
-                    )),
-                const Icon(Icons.chevron_right, color: Colors.white38),
-                const Text("● App",
-                    style: TextStyle(color: Colors.white, fontSize: 12)),
-              ],
-            ),
-          ),
-
           if (fallDetected) ...[
             const SizedBox(height: 14),
             Container(
@@ -396,8 +384,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
               ),
               child: const Row(
                 children: [
-                  Icon(Icons.warning_amber_rounded,
-                      color: Colors.redAccent),
+                  Icon(Icons.warning_amber_rounded, color: Colors.redAccent),
                   SizedBox(width: 10),
                   Text(
                     "Fall Detected!",
@@ -416,9 +403,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
-  // ---------------------------------------------------------
   // QUICK ACCESS
-  // ---------------------------------------------------------
   Widget _quickAccess(BuildContext context) {
     return Container(
       padding: const EdgeInsets.all(20),
@@ -509,9 +494,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
-  // ---------------------------------------------------------
-  // FALLBACK SCREENS
-  // ---------------------------------------------------------
+  // Loading / fallback widgets
   Widget _loading() => const Scaffold(
         backgroundColor: Color(0xFF0E1625),
         body: Center(

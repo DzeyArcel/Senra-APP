@@ -31,7 +31,7 @@ class _DeviceConnectedScreenState extends State<DeviceConnectedScreen> {
   }
 
   // =============================================================
-  // LOAD DEVICE + REALTIME WATCHER (FINAL & ECOSYSTEM READY)
+  // LOAD DEVICE + REAL-TIME WATCHER
   // =============================================================
   Future<void> _loadDevice() async {
     final prefs = await SharedPreferences.getInstance();
@@ -39,6 +39,7 @@ class _DeviceConnectedScreenState extends State<DeviceConnectedScreen> {
 
     if (caregiverId == null || caregiverId.isEmpty) return;
 
+    // Read caregiver
     final caregiverDoc = await FirebaseFirestore.instance
         .collection("caregivers")
         .doc(caregiverId)
@@ -46,77 +47,67 @@ class _DeviceConnectedScreenState extends State<DeviceConnectedScreen> {
 
     if (!caregiverDoc.exists) return;
 
-    final paired = caregiverDoc.data()?["pairedDevice"];
+    final pairedDevice = caregiverDoc.data()?["pairedDevice"];
 
-    if (paired == null || paired.toString().isEmpty) {
+    if (pairedDevice == null || pairedDevice.toString().isEmpty) {
       setState(() => deviceId = null);
       return;
     }
 
-    setState(() => deviceId = paired);
+    setState(() => deviceId = pairedDevice);
 
     // Validate device exists
-    final deviceCheck = await FirebaseFirestore.instance
+    final deviceDoc = await FirebaseFirestore.instance
         .collection("devices")
-        .doc(paired)
+        .doc(pairedDevice)
         .get();
 
-    if (!deviceCheck.exists) {
+    if (!deviceDoc.exists) {
       // Auto-unpair
       await FirebaseFirestore.instance
           .collection("caregivers")
           .doc(caregiverId)
           .update({"pairedDevice": ""});
 
-      prefs.remove("pairedDevice");
+      await prefs.remove("pairedDevice");
 
       if (!mounted) return;
       Navigator.pushReplacementNamed(context, "/device-pairing");
       return;
     }
 
-    // =============================================================
-    // REALTIME CHECKER — ultra stable & synced with firmware
-    // =============================================================
+    // REALTIME FIRESTORE WATCHER
     deviceListener = FirebaseFirestore.instance
         .collection("devices")
-        .doc(paired)
+        .doc(pairedDevice)
         .snapshots()
         .listen((snap) {
       if (!snap.exists) return;
 
-      final data = snap.data() ?? {};
+      final data = snap.data()!;
       deviceData = data;
 
-      // ---------- Status ----------
-      String status = "offline";
-      final rawStatus = data["status"];
+      // -------- STATUS --------
+      bool online = false;
 
-      if (rawStatus is String) status = rawStatus;
-      if (rawStatus is Map) status = rawStatus["stringValue"] ?? "offline";
-
-      // ---------- lastSync ----------
+      // Read lastSync → Timestamp or String
       DateTime? lastSync;
       final rawSync = data["lastSync"];
 
       if (rawSync is Timestamp) lastSync = rawSync.toDate();
       if (rawSync is String) lastSync = DateTime.tryParse(rawSync);
 
-      bool online = false;
-
+      // 20-second rule
       if (lastSync != null) {
         final diff = DateTime.now().difference(lastSync).inSeconds;
-        online = diff <= 20; // same ecosystem rule
+        online = diff <= 20;
       }
 
       if (mounted) setState(() => isOnline = online);
 
-      // =============================================================
-      // AUTO-REDIRECT → DASHBOARD (once device goes online)
-      // =============================================================
+      // -------- AUTO REDIRECT --------
       if (online && !_redirected) {
         _redirected = true;
-
         Future.delayed(const Duration(milliseconds: 500), () {
           if (!mounted) return;
           Navigator.pushReplacementNamed(context, "/dashboard");
@@ -126,27 +117,24 @@ class _DeviceConnectedScreenState extends State<DeviceConnectedScreen> {
   }
 
   // =============================================================
-  // FORMATTER
+  // TIMESTAMP FORMATTER
   // =============================================================
-  String _formatTimeAgo(dynamic value) {
+  String _formatTimeAgo(dynamic raw) {
     DateTime? dt;
-
-    if (value is String) dt = DateTime.tryParse(value);
-    if (value is Timestamp) dt = value.toDate();
+    if (raw is Timestamp) dt = raw.toDate();
+    if (raw is String) dt = DateTime.tryParse(raw);
 
     if (dt == null) return "Unknown";
 
     final diff = DateTime.now().difference(dt);
-
     if (diff.inSeconds < 60) return "Just now";
     if (diff.inMinutes < 60) return "${diff.inMinutes} min ago";
     if (diff.inHours < 24) return "${diff.inHours} hrs ago";
-
     return "${diff.inDays} days ago";
   }
 
   // =============================================================
-  // UI — EXACTLY YOUR DESIGN (UNCHANGED)
+  // UI
   // =============================================================
   @override
   Widget build(BuildContext context) {
@@ -162,11 +150,11 @@ class _DeviceConnectedScreenState extends State<DeviceConnectedScreen> {
       );
     }
 
-    final battery = deviceData?["battery"] ??
-        deviceData?["batteryLevel"] ??
+    final battery = deviceData?["batteryLevel"] ??
+        deviceData?["battery"] ??
         0;
 
-    final lastSync = _formatTimeAgo(deviceData?["lastSync"]);
+    final lastSyncText = _formatTimeAgo(deviceData?["lastSync"]);
 
     return Scaffold(
       backgroundColor: const Color(0xFF0E1625),
@@ -175,7 +163,7 @@ class _DeviceConnectedScreenState extends State<DeviceConnectedScreen> {
           padding: const EdgeInsets.all(16),
           child: Column(
             children: [
-              // HEADER
+              // HEADER -----------------------------------------------------
               Row(
                 children: [
                   IconButton(
@@ -190,21 +178,22 @@ class _DeviceConnectedScreenState extends State<DeviceConnectedScreen> {
                       fontSize: 18,
                       fontWeight: FontWeight.w700,
                     ),
-                  )
+                  ),
                 ],
               ),
 
               const SizedBox(height: 30),
 
-              // ONLINE ICON
+              // ONLINE STATUS ICON ------------------------------------------
               Container(
                 width: 130,
                 height: 130,
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
                   border: Border.all(
-                    color:
-                        isOnline ? const Color(0xFF33B5FF) : Colors.redAccent,
+                    color: isOnline
+                        ? const Color(0xFF33B5FF)
+                        : Colors.redAccent,
                     width: 4,
                   ),
                 ),
@@ -245,6 +234,7 @@ class _DeviceConnectedScreenState extends State<DeviceConnectedScreen> {
 
               const SizedBox(height: 30),
 
+              // ICON FLOW ---------------------------------------------------
               Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: const [
@@ -258,7 +248,7 @@ class _DeviceConnectedScreenState extends State<DeviceConnectedScreen> {
 
               const SizedBox(height: 30),
 
-              // DEVICE CARD
+              // DEVICE CARD -------------------------------------------------
               Container(
                 padding: const EdgeInsets.all(18),
                 decoration: BoxDecoration(
@@ -279,16 +269,15 @@ class _DeviceConnectedScreenState extends State<DeviceConnectedScreen> {
                     Text(
                       isOnline ? "Online" : "Offline",
                       style: TextStyle(
-                        color: isOnline
-                            ? Colors.lightGreenAccent
-                            : Colors.redAccent,
+                        color:
+                            isOnline ? Colors.lightGreenAccent : Colors.redAccent,
                         fontWeight: FontWeight.bold,
                         fontSize: 14,
                       ),
                     ),
                     const SizedBox(height: 6),
                     Text(
-                      "Last Sync: $lastSync\nBattery: $battery%",
+                      "Last Sync: $lastSyncText\nBattery: $battery%",
                       textAlign: TextAlign.center,
                       style: const TextStyle(
                         color: Colors.white70,
@@ -302,10 +291,11 @@ class _DeviceConnectedScreenState extends State<DeviceConnectedScreen> {
 
               const SizedBox(height: 35),
 
+              // CONTINUE SETUP BUTTON ---------------------------------------
               if (!isOnline)
                 GestureDetector(
                   onTap: () =>
-                      Navigator.pushNamed(context, "/connecting-senra"),
+                      Navigator.pushNamed(context, "/connecting-to-senra"),
                   child: Container(
                     width: double.infinity,
                     padding: const EdgeInsets.symmetric(vertical: 14),

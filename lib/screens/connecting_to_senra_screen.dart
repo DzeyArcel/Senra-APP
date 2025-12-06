@@ -29,7 +29,7 @@ class _ConnectingToSenraScreenState extends State<ConnectingToSenraScreen> {
   }
 
   // ============================================================
-  // START WATCHING DEVICE STATUS — FINAL LOGIC
+  // START WATCHING DEVICE STATUS (FINAL SENRA LOGIC)
   // ============================================================
   Future<void> _startMonitoring() async {
     final prefs = await SharedPreferences.getInstance();
@@ -45,12 +45,10 @@ class _ConnectingToSenraScreenState extends State<ConnectingToSenraScreen> {
 
       final data = snap.data() ?? {};
 
-      // ---------------- WIFI NAME (SAFE READ) ----------------
-      final wifi = data["wifiName"] ??
-          data["wifi"] ??
-          "";
+      // -------- WIFI NAME SAFE READ --------
+      final wifi = data["wifiName"] ?? data["wifi"] ?? "";
 
-      // ---------------- LAST SYNC (SAFE READ) ----------------
+      // -------- lastSync SAFE READ --------
       DateTime? lastSync;
       final rawSync = data["lastSync"];
 
@@ -61,14 +59,17 @@ class _ConnectingToSenraScreenState extends State<ConnectingToSenraScreen> {
 
       if (lastSync != null) {
         final diff = DateTime.now().difference(lastSync).inSeconds;
-        online = diff <= 20; // ecosystem rule
+        online = diff <= 20; // ecosystem online rule
       }
 
       // ============================================================
-      // FINAL LOGIC:
-      // 1️⃣ If device has WiFi → Dashboard
-      // 2️⃣ If device is online WITHOUT WiFi → WiFi Config
-      // 3️⃣ Otherwise keep waiting
+      // FINAL OFFICIAL SENRA ROUTING LOGIC
+      // ============================================================
+      //
+      // 1️⃣ If device already has WiFi → dashboard
+      // 2️⃣ If device is online (but no WiFi yet) → WiFi Config
+      // 3️⃣ Otherwise → stay in connecting screen
+      //
       // ============================================================
 
       if (wifi.toString().isNotEmpty) {
@@ -79,8 +80,8 @@ class _ConnectingToSenraScreenState extends State<ConnectingToSenraScreen> {
     });
 
     // ============================================================
-    // SAFETY TIMEOUT: 6 SEC
-    // If no response → WiFi Config screen
+    // SAFETY AUTO-ROUTE → WiFi Config after 6 seconds
+    // Prevents freezing if device takes long to sync
     // ============================================================
     Future.delayed(const Duration(seconds: 6), () {
       if (!mounted || redirected) return;
@@ -89,7 +90,7 @@ class _ConnectingToSenraScreenState extends State<ConnectingToSenraScreen> {
   }
 
   // ============================================================
-  // SAFE NAVIGATOR
+  // SAFE NAVIGATION WRAPPER
   // ============================================================
   void _go(String route) {
     if (!mounted || redirected) return;
@@ -99,7 +100,7 @@ class _ConnectingToSenraScreenState extends State<ConnectingToSenraScreen> {
   }
 
   // ============================================================
-  // UI — EXACTLY AS YOU DESIGNED
+  // UI
   // ============================================================
   @override
   Widget build(BuildContext context) {

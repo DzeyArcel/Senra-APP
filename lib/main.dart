@@ -23,6 +23,7 @@ import 'screens/emergency_contacts_screen.dart';
 import 'screens/edit_contact_screen.dart';
 import 'screens/location_tracking_screen.dart';
 import 'screens/activity_history_screen.dart';
+
 import 'screens/alert_screen.dart';
 import 'screens/help_notified_screen.dart';
 
@@ -43,29 +44,21 @@ class SenraApp extends StatelessWidget {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
 
-      // ---------------------------------------------------
-      // 🚀 MAIN ROUTE GENERATOR (now supports arguments)
-      // ---------------------------------------------------
+      // ------------------------------------------------------------
+      // 🚀 onGenerateRoute — Needed for passing alert arguments
+      // ------------------------------------------------------------
       onGenerateRoute: (RouteSettings settings) {
         final args = settings.arguments;
 
         switch (settings.name) {
           case '/alert':
             return MaterialPageRoute(
-              builder: (_) => AlertScreen(
-                location: (args is Map) ? args["location"] : "Unknown",
-              ),
+              builder: (_) => const AlertScreen(),
             );
 
           case '/help-notified':
             return MaterialPageRoute(
-              builder: (_) => HelpNotifiedScreen(
-                location: (args is Map) ? args["location"] : "Unknown",
-                sentTime: (args is Map) ? args["sentTime"] ?? "Unknown" : "Unknown",
-                contacts: (args is Map) ? args["contacts"] ?? [] : [],
-                lat: (args is Map) ? args["lat"] : null,
-                lng: (args is Map) ? args["lng"] : null,
-              ),
+              builder: (_) => const HelpNotifiedScreen(),
             );
 
           default:
@@ -73,7 +66,9 @@ class SenraApp extends StatelessWidget {
         }
       },
 
+      // ------------------------------------------------------------
       // STATIC ROUTES
+      // ------------------------------------------------------------
       routes: {
         '/welcome': (_) => const WelcomeScreen(),
         '/startup': (_) => const StartupRouter(),

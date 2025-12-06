@@ -22,7 +22,7 @@ class _LocationTrackingScreenState extends State<LocationTrackingScreen> {
   String accuracy = "—";
 
   bool loading = true;
-  bool hasGps = false;
+  bool gpsLocked = false;
 
   StreamSubscription? gpsSub;
 
@@ -54,23 +54,14 @@ class _LocationTrackingScreenState extends State<LocationTrackingScreen> {
   }
 
   // ==========================================================
-  // Listen to Main Device Document (Firmware v10)
+  // Listen to Firestore device document
   // ==========================================================
   void _listenToDeviceDocument(String deviceId) {
     final ref =
         FirebaseFirestore.instance.collection("devices").doc(deviceId);
 
     gpsSub = ref.snapshots().listen((snap) {
-      if (!snap.exists || snap.data() == null) {
-        setState(() {
-          hasGps = false;
-          loading = false;
-          address = "No GPS available yet";
-          lat = null;
-          lng = null;
-        });
-        return;
-      }
+      if (!snap.exists || snap.data() == null) return;
 
       final data = snap.data()!;
       _applyGpsData(data);
@@ -80,41 +71,44 @@ class _LocationTrackingScreenState extends State<LocationTrackingScreen> {
   }
 
   // ==========================================================
-  // Apply Device GPS Data from Firestore
+  // Parse GPS Data
   // ==========================================================
   void _applyGpsData(Map<String, dynamic> data) {
-    final double? newLat = (data["lat"] as num?)?.toDouble();
-    final double? newLng = (data["lng"] as num?)?.toDouble();
+    final newLat = (data["lat"] as num?)?.toDouble();
+    final newLng = (data["lng"] as num?)?.toDouble();
 
+    // NO GPS FIX YET
     if (newLat == null || newLng == null) {
       setState(() {
-        hasGps = false;
-        address = "No GPS available";
+        gpsLocked = false;
+        address = "Searching for satellite signal…";
+        accuracy = "—";
       });
       return;
     }
 
-    final rawSync = data["lastSync"];
+    // GPS LOCKED!
+    final syncRaw = data["lastSync"];
     DateTime? ts;
 
-    if (rawSync is Timestamp) ts = rawSync.toDate();
-    if (rawSync is String) ts = DateTime.tryParse(rawSync);
+    if (syncRaw is Timestamp) ts = syncRaw.toDate();
+    if (syncRaw is String) ts = DateTime.tryParse(syncRaw);
 
     setState(() {
+      gpsLocked = true;
       lat = newLat;
       lng = newLng;
-      hasGps = true;
-
       address = "$newLat, $newLng";
 
       lastUpdate = ts != null
-          ? "${ts.hour.toString().padLeft(2, '0')}:${ts.minute.toString().padLeft(2, '0')}  —  ${ts.month}/${ts.day}/${ts.year}"
+          ? "${ts.hour.toString().padLeft(2, '0')}:${ts.minute.toString().padLeft(2, '0')} — ${ts.month}/${ts.day}/${ts.year}"
           : "Unknown";
 
-      final num? hdop = data["hdop"];
+      // HDOP (for accuracy)
+      final hdop = (data["hdop"] as num?)?.toDouble();
       if (hdop != null) {
         if (hdop <= 1.5) accuracy = "±3m";
-        else if (hdop <= 3) accuracy = "±5m";
+        else if (hdop <= 3.0) accuracy = "±5m";
         else accuracy = "Low";
       } else {
         accuracy = "—";
@@ -123,14 +117,11 @@ class _LocationTrackingScreenState extends State<LocationTrackingScreen> {
   }
 
   // ==========================================================
-  // Open OpenStreetMap
+  // Open maps
   // ==========================================================
   void openOSM() {
     if (lat == null || lng == null) return;
-
-    final url =
-        "https://www.openstreetmap.org/?mlat=$lat&mlon=$lng#map=18/$lat/$lng";
-
+    final url = "https://www.openstreetmap.org/?mlat=$lat&mlon=$lng#map=18/$lat/$lng";
     launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
   }
 
@@ -139,12 +130,9 @@ class _LocationTrackingScreenState extends State<LocationTrackingScreen> {
   // ==========================================================
   @override
   Widget build(BuildContext context) {
-    final mapPreview = (lat != null && lng != null)
+    final mapPreview = (gpsLocked)
         ? "https://staticmap.openstreetmap.de/staticmap.php"
-            "?center=$lat,$lng"
-            "&zoom=16"
-            "&size=600x300"
-            "&markers=$lat,$lng,red"
+            "?center=$lat,$lng&zoom=16&size=600x300&markers=$lat,$lng,red"
         : "";
 
     return Scaffold(
@@ -155,9 +143,10 @@ class _LocationTrackingScreenState extends State<LocationTrackingScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // --------------------------------------------------
+
+              //----------------------------------------------------------
               // HEADER
-              // --------------------------------------------------
+              //----------------------------------------------------------
               Row(
                 children: [
                   IconButton(
@@ -176,16 +165,18 @@ class _LocationTrackingScreenState extends State<LocationTrackingScreen> {
                   ),
                 ],
               ),
-              const SizedBox(height: 4),
-              const Text("Event-Based Monitoring",
-                  style: TextStyle(color: Colors.white70, fontSize: 14)),
+              const SizedBox(height: 6),
+              Text(
+                gpsLocked ? "Real-time GPS Monitoring" : "Waiting for GPS Fix…",
+                style: const TextStyle(color: Colors.white70, fontSize: 14),
+              ),
               const SizedBox(height: 22),
 
-              // =====================================================
+              //----------------------------------------------------------
               // MAP PREVIEW
-              // =====================================================
+              //----------------------------------------------------------
               GestureDetector(
-                onTap: openOSM,
+                onTap: gpsLocked ? openOSM : null,
                 child: Container(
                   height: 300,
                   width: double.infinity,
@@ -195,23 +186,23 @@ class _LocationTrackingScreenState extends State<LocationTrackingScreen> {
                   ),
                   child: ClipRRect(
                     borderRadius: BorderRadius.circular(14),
-                    child: (!hasGps || mapPreview.isEmpty)
-                        ? const Center(
+                    child: gpsLocked
+                        ? Image.network(mapPreview, fit: BoxFit.cover)
+                        : const Center(
                             child: Text(
-                              "No Location Yet",
+                              "Searching for GPS…",
                               style: TextStyle(color: Colors.white54),
                             ),
-                          )
-                        : Image.network(mapPreview, fit: BoxFit.cover),
+                          ),
                   ),
                 ),
               ),
 
               const SizedBox(height: 26),
 
-              // =====================================================
+              //----------------------------------------------------------
               // DETAILS CARD
-              // =====================================================
+              //----------------------------------------------------------
               Container(
                 padding: const EdgeInsets.all(18),
                 decoration: BoxDecoration(
@@ -239,7 +230,6 @@ class _LocationTrackingScreenState extends State<LocationTrackingScreen> {
 
                     const SizedBox(height: 16),
 
-                    // Address
                     Row(
                       children: [
                         const Icon(Icons.place_rounded,
@@ -257,7 +247,6 @@ class _LocationTrackingScreenState extends State<LocationTrackingScreen> {
 
                     const SizedBox(height: 20),
 
-                    // Update + Accuracy
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
@@ -272,13 +261,13 @@ class _LocationTrackingScreenState extends State<LocationTrackingScreen> {
               const SizedBox(height: 22),
 
               Container(
-                padding: const EdgeInsets.all(18),
+                padding: const EdgeInsets.all(16),
                 decoration: BoxDecoration(
                   color: const Color(0xFF162233),
                   borderRadius: BorderRadius.circular(14),
                 ),
                 child: const Text(
-                  "Location data appears after the device sends its first GPS update.",
+                  "GPS coordinates appear only after your Senra device gets a valid satellite fix.",
                   textAlign: TextAlign.center,
                   style: TextStyle(color: Colors.white70, fontSize: 13),
                 ),

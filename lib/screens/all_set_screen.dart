@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 
 class AllSetScreen extends StatelessWidget {
   const AllSetScreen({super.key});
@@ -7,14 +8,60 @@ class AllSetScreen extends StatelessWidget {
   Future<void> _finishSetup(BuildContext context) async {
     final prefs = await SharedPreferences.getInstance();
 
-    // Mark onboarding as completed so user won't be redirected again
+    // Mark onboarding complete
     await prefs.setBool("onboarding_complete", true);
 
-    // Go directly to dashboard, remove history
+    // Validate paired device
+    final deviceId = prefs.getString("pairedDevice") ?? "";
+    if (deviceId.isEmpty) {
+      // fallback: return to DevicePairing
+      if (context.mounted) {
+        Navigator.pushNamedAndRemoveUntil(
+          context,
+          "/device-pairing",
+          (route) => false,
+        );
+      }
+      return;
+    }
+
+    // Check device online state (lastSync rule)
+    final snap = await FirebaseFirestore.instance
+        .collection("devices")
+        .doc(deviceId)
+        .get();
+
+    if (!snap.exists) {
+      // Device deleted or not yet registered → go to device-connected
+      if (context.mounted) {
+        Navigator.pushNamedAndRemoveUntil(
+          context,
+          "/device-connected",
+          (route) => false,
+        );
+      }
+      return;
+    }
+
+    final raw = snap.data()!;
+    bool online = false;
+
+    final rawLastSync = raw["lastSync"];
+    DateTime? lastSync;
+
+    if (rawLastSync is Timestamp) lastSync = rawLastSync.toDate();
+    if (rawLastSync is String) lastSync = DateTime.tryParse(rawLastSync);
+
+    if (lastSync != null) {
+      final diff = DateTime.now().difference(lastSync).inSeconds;
+      online = diff <= 20;
+    }
+
+    // 🔥 FINAL ROUTING LOGIC
     if (context.mounted) {
       Navigator.pushNamedAndRemoveUntil(
         context,
-        "/dashboard",
+        online ? "/dashboard" : "/device-connected",
         (route) => false,
       );
     }
@@ -30,8 +77,7 @@ class AllSetScreen extends StatelessWidget {
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-
-              // ====== CHECK ICON ======
+              // CHECKMARK
               Container(
                 padding: const EdgeInsets.all(32),
                 decoration: BoxDecoration(
@@ -54,7 +100,6 @@ class AllSetScreen extends StatelessWidget {
 
               const SizedBox(height: 40),
 
-              // ===== TITLE =====
               const Text(
                 "You're All Set ✨",
                 textAlign: TextAlign.center,
@@ -67,7 +112,6 @@ class AllSetScreen extends StatelessWidget {
 
               const SizedBox(height: 12),
 
-              // ===== SUBTEXT =====
               const Text(
                 "Senra is now connected and keeping\nwatch.",
                 textAlign: TextAlign.center,
@@ -80,7 +124,6 @@ class AllSetScreen extends StatelessWidget {
 
               const SizedBox(height: 50),
 
-              // ===== BUTTON =====
               GestureDetector(
                 onTap: () => _finishSetup(context),
                 child: Container(

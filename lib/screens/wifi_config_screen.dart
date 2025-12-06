@@ -12,16 +12,17 @@ class WifiConfigScreen extends StatefulWidget {
 }
 
 class _WifiConfigScreenState extends State<WifiConfigScreen> {
-  String _status = "Requesting Senra to enter Wi-Fi setup mode...";
-  bool setupPageOpened = false;
-  bool redirected = false;
+  String statusText =
+      "Requesting Senra to enter Wi-Fi setup mode…\nPlease wait.";
+  bool waitingForReconnect = false;
+
   String? deviceId;
   StreamSubscription? sub;
 
   @override
   void initState() {
     super.initState();
-    _startProcess();
+    _startFlow();
   }
 
   @override
@@ -30,216 +31,185 @@ class _WifiConfigScreenState extends State<WifiConfigScreen> {
     super.dispose();
   }
 
-  // =====================================================================
-  // START WiFi Setup Process (includes realtime monitoring)
-  // =====================================================================
-  Future<void> _startProcess() async {
-    await _loadDeviceId();
+  // ============================================================
+  // MAIN SEQUENCE
+  // ============================================================
+  Future<void> _startFlow() async {
+    final prefs = await SharedPreferences.getInstance();
+    deviceId = prefs.getString("pairedDevice");
+
     if (deviceId == null) {
-      setState(() => _status = "No paired device detected.");
+      setState(() => statusText = "No device paired.");
       return;
     }
 
-    // 1️⃣ Command ESP32 to enter WiFi reset mode
+    // 1️⃣ Tell firmware to enter setup mode
     await FirebaseFirestore.instance
         .collection("devices")
         .doc(deviceId)
         .update({"adminCommand": "reset_wifi"});
 
-    setState(() => _status = "Senra is now entering Wi-Fi setup mode...");
-
-    // small delay before opening browser
-    await Future.delayed(const Duration(seconds: 3));
-    _openSetupPage();
-
-    // 2️⃣ Start realtime monitoring
-    _watchDeviceWifiStatus();
-
-    // 3️⃣ Safe timeout to detect AP mode
-    Future.delayed(const Duration(seconds: 10), () {
-      if (!mounted || redirected) return;
-
-      setState(() {
-        _status =
-            "Could not detect Senra AP.\nPlease connect manually to 'SENRA-Setup' Wi-Fi.";
-      });
+    setState(() {
+      statusText =
+          "Senra is switching to Wi-Fi setup mode…\nThis may take a few seconds.";
     });
+
+    // Begin listening for reconnect
+    _startReconnectListener();
   }
 
-  // =====================================================================
-  // Load paired device from local storage
-  // =====================================================================
-  Future<void> _loadDeviceId() async {
-    final prefs = await SharedPreferences.getInstance();
-    deviceId = prefs.getString("pairedDevice");
-  }
-
-  // =====================================================================
-  // Open 192.168.4.1 setup page
-  // =====================================================================
-  Future<void> _openSetupPage() async {
-    const url = "http://192.168.4.1/";
-    final uri = Uri.parse(url);
-
-    try {
-      await launchUrl(uri, mode: LaunchMode.inAppBrowserView);
-
-      setState(() {
-        setupPageOpened = true;
-        _status = "Senra setup page opened successfully.";
-      });
-    } catch (e) {
-      setState(() {
-        _status =
-            "Failed to open setup page.\nConnect to 'SENRA-Setup' Wi-Fi manually.";
-      });
-    }
-  }
-
-  // =====================================================================
-  // Watch Firestore for WiFi name (means setup complete)
-  // =====================================================================
-  void _watchDeviceWifiStatus() {
+  // ============================================================
+  // LISTEN FOR DEVICE COMING BACK ONLINE
+  // ============================================================
+  void _startReconnectListener() {
     if (deviceId == null) return;
 
-    final ref =
-        FirebaseFirestore.instance.collection("devices").doc(deviceId);
+    final ref = FirebaseFirestore.instance.collection("devices").doc(deviceId);
 
     sub = ref.snapshots().listen((snap) {
-      if (!snap.exists || redirected) return;
+      if (!waitingForReconnect) return;
+
+      if (!snap.exists) return;
 
       final data = snap.data() ?? {};
-      final wifi = data["wifiName"] ??
-          data["wifi"] ??
-          "";
+      final wifi = data["wifiName"] ?? "";
+      final status = data["status"] ?? "";
+      final lastSync = data["lastSync"];
 
-      // WiFi finally configured → go All Set
-      if (wifi.toString().isNotEmpty) {
-        _next("/all-set");
+      if (wifi.toString().isNotEmpty && status == "online") {
+        Navigator.pushReplacementNamed(context, "/all-set");
       }
     });
   }
 
-  // =====================================================================
-  // Redirect handler (prevents double navigation)
-  // =====================================================================
-  void _next(String route) {
-    if (redirected || !mounted) return;
-    redirected = true;
-    Navigator.pushReplacementNamed(context, route);
+  // ============================================================
+  // OPEN WiFi SETTINGS
+  // ============================================================
+  Future<void> _openWifiSettings() async {
+    await launchUrl(Uri.parse("App-Prefs:root=WIFI"));
   }
 
-  // =====================================================================
-  // UI (unchanged)
-  // =====================================================================
+  // ============================================================
+  // OPEN SETUP PAGE AFTER USER CONNECTED
+  // ============================================================
+  Future<void> _openSetupPage() async {
+    const url = "http://192.168.4.1";
+
+    setState(() {
+      statusText = "Opening Senra setup page…\nEnter Wi-Fi credentials.";
+    });
+
+    await Future.delayed(const Duration(milliseconds: 300));
+
+    try {
+      await launchUrl(Uri.parse(url), mode: LaunchMode.inAppBrowserView);
+
+      setState(() {
+        waitingForReconnect = true;
+        statusText =
+            "When finished, Senra will reconnect.\nPlease wait…";
+      });
+    } catch (e) {
+      setState(() {
+        statusText =
+            "Failed to open setup page.\nPlease ensure you're connected to SENRA-Setup Wi-Fi.";
+      });
+    }
+  }
+
+  // ============================================================
+  // UI
+  // ============================================================
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: const Color(0xFF0E1625),
       body: SafeArea(
-        child: SingleChildScrollView(
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                IconButton(
-                  onPressed: () => Navigator.pop(context),
-                  icon: const Icon(Icons.arrow_back, color: Colors.white70),
+        child: Padding(
+          padding: const EdgeInsets.all(18),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              IconButton(
+                onPressed: () => Navigator.pop(context),
+                icon: const Icon(Icons.arrow_back, color: Colors.white70),
+              ),
+
+              const SizedBox(height: 10),
+
+              Container(
+                padding: const EdgeInsets.all(20),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF162233),
+                  borderRadius: BorderRadius.circular(14),
                 ),
-
-                const SizedBox(height: 10),
-
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.all(20),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF162233),
-                    borderRadius: BorderRadius.circular(16),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: const [
-                          Icon(Icons.wifi, color: Color(0xFF33B5FF)),
-                          SizedBox(width: 8),
-                          Text(
-                            "Connect Senra to Wi-Fi",
-                            style: TextStyle(
-                              color: Colors.white,
-                              fontSize: 17,
-                              fontWeight: FontWeight.w700,
-                            ),
-                          ),
-                        ],
-                      ),
-
-                      const SizedBox(height: 14),
-
-                      Text(
-                        _status,
-                        style: const TextStyle(
-                          color: Colors.white70,
-                          fontSize: 14,
-                          height: 1.45,
-                        ),
-                      ),
-
-                      const SizedBox(height: 22),
-
-                      Container(
-                        height: 240,
-                        width: double.infinity,
-                        decoration: BoxDecoration(
-                          color: const Color(0xFF1B2A3A),
-                          borderRadius: BorderRadius.circular(14),
-                        ),
-                        child: const Center(
-                          child: Icon(
-                            Icons.router_rounded,
-                            color: Colors.white38,
-                            size: 60,
-                          ),
-                        ),
-                      ),
-
-                      const SizedBox(height: 24),
-
-                      const Text(
-                        "1. Senra will switch to Access Point mode.\n"
-                        "2. Your phone should detect 'SENRA-Setup' Wi-Fi.\n"
-                        "3. The setup page opens automatically.\n"
-                        "4. Enter your home Wi-Fi name & password.",
-                        style: TextStyle(
-                          color: Colors.white54,
-                          fontSize: 13,
-                          height: 1.5,
-                        ),
-                      ),
-
-                      const SizedBox(height: 14),
-
-                      const Center(
-                        child: Text(
-                          "Senra Setup Address:\nhttp://192.168.4.1",
-                          textAlign: TextAlign.center,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: const [
+                        Icon(Icons.wifi, color: Color(0xFF33B5FF)),
+                        SizedBox(width: 8),
+                        Text(
+                          "Change Wi-Fi Network",
                           style: TextStyle(
-                            color: Colors.white38,
-                            fontSize: 12,
-                          ),
+                              color: Colors.white,
+                              fontSize: 18,
+                              fontWeight: FontWeight.w700),
                         ),
-                      ),
+                      ],
+                    ),
 
-                      const SizedBox(height: 16),
-                    ],
-                  ),
+                    const SizedBox(height: 16),
+
+                    Text(
+                      statusText,
+                      style: const TextStyle(
+                        color: Colors.white70,
+                        fontSize: 14,
+                        height: 1.5,
+                      ),
+                    ),
+
+                    const SizedBox(height: 18),
+
+                    // ==============================
+                    // STEP BUTTONS
+                    // ==============================
+                    ElevatedButton(
+                      onPressed: _openWifiSettings,
+                      style: _btn,
+                      child: const Text("1. Open Wi-Fi Settings"),
+                    ),
+
+                    const SizedBox(height: 12),
+
+                    ElevatedButton(
+                      onPressed: _openSetupPage,
+                      style: _btn,
+                      child: const Text("2. Continue to Setup Page"),
+                    ),
+
+                    const SizedBox(height: 20),
+
+                    const Text(
+                      "Make sure to connect to:\nWi-Fi: SENRA-Setup",
+                      style: TextStyle(color: Colors.white38, fontSize: 12),
+                    ),
+                  ],
                 ),
-              ],
-            ),
+              ),
+            ],
           ),
         ),
       ),
     );
   }
+
+  ButtonStyle get _btn => ElevatedButton.styleFrom(
+        backgroundColor: const Color(0xFF33B5FF),
+        foregroundColor: Colors.white,
+        padding: const EdgeInsets.symmetric(vertical: 12),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+      );
 }

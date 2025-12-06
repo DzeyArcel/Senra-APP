@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:audioplayers/audioplayers.dart';
 
 class AlertScreen extends StatefulWidget {
   final int startSeconds;
@@ -21,66 +22,118 @@ class _AlertScreenState extends State<AlertScreen> {
   late int seconds;
   Timer? timer;
 
-  // ARGUMENTS
+  // Sound
+  late AudioPlayer audioPlayer;
+
+  // state
+  bool handled = false;
+  bool redirected = false;
+
+  // alert details
   String resolvedLocation = "Processing location...";
   double? lat;
   double? lng;
   String? alertId;
   String? mapURL;
   String fallType = "Fall Detected";
+
   List<Map<String, String>> contacts = [];
 
   @override
   void initState() {
     super.initState();
+
     seconds = widget.startSeconds;
+    audioPlayer = AudioPlayer();
 
-    // Load passed alert details after UI builds
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      final args =
-          ModalRoute.of(context)?.settings.arguments as Map<String, dynamic>?;
-
-      setState(() {
-        fallType = args?["fallType"] ?? "Fall Detected";
-        resolvedLocation = args?["location"] ?? widget.location ?? "Unknown";
-
-        lat = args?["lat"];
-        lng = args?["lng"];
-        alertId = args?["alertId"];
-
-        mapURL = args?["mapURL"] ??
-            ((lat != null && lng != null)
-                ? "https://www.google.com/maps?q=$lat,$lng"
-                : null);
-
-        // Contacts safe parsing
-        contacts = (args?["contacts"] as List<dynamic>? ?? [])
-            .map((e) => Map<String, String>.from(e))
-            .toList()
-          ..removeWhere((c) =>
-              (c["name"] ?? "").isEmpty || (c["phone"] ?? "").isEmpty);
-      });
+      _loadArguments();
+      _playAlertSound(); // 🔊 PLAY SOUND
     });
 
-    // Countdown
-    timer = Timer.periodic(const Duration(seconds: 1), (t) {
-      if (seconds > 1) {
-        setState(() => seconds--);
-      } else {
-        t.cancel();
-        _markAlertHandled();
-        _goToHelpNotified();
-      }
-    });
+    _startCountdown();
   }
 
   @override
   void dispose() {
     timer?.cancel();
+    audioPlayer.stop(); // 🔇 STOP SOUND
+    audioPlayer.dispose();
     super.dispose();
   }
 
-  // 🔥 Mark this alert as handled
+  // --------------------------------------------------------------------------
+  // LOAD ARGUMENTS
+  // --------------------------------------------------------------------------
+  void _loadArguments() {
+    final args =
+        ModalRoute.of(context)?.settings.arguments as Map<String, dynamic>?;
+
+    if (args == null) return;
+
+    setState(() {
+      fallType = args["fallType"] ?? "Fall Detected";
+      resolvedLocation = args["location"] ?? widget.location ?? "Unknown";
+      lat = args["lat"];
+      lng = args["lng"];
+      alertId = args["alertId"];
+
+      mapURL = args["mapURL"] ??
+          ((lat != null && lng != null)
+              ? "https://www.google.com/maps?q=$lat,$lng"
+              : null);
+
+      contacts = (args["contacts"] as List<dynamic>? ?? [])
+          .map((e) => Map<String, String>.from(e))
+          .toList();
+    });
+  }
+
+  // --------------------------------------------------------------------------
+  // SOUND PLAYER
+  // --------------------------------------------------------------------------
+  Future<void> _playAlertSound() async {
+    try {
+      await audioPlayer.setReleaseMode(ReleaseMode.loop); // repeat
+      await audioPlayer.play(
+        AssetSource('sounds/alert.wav'),
+      );
+    } catch (e) {
+      debugPrint("Sound error: $e");
+    }
+  }
+
+  void _stopSound() {
+    audioPlayer.stop();
+  }
+
+  // --------------------------------------------------------------------------
+  // COUNTDOWN TIMER
+  // --------------------------------------------------------------------------
+  void _startCountdown() {
+    timer = Timer.periodic(const Duration(seconds: 1), (t) {
+      if (seconds > 1) {
+        if (mounted) setState(() => seconds--);
+      } else {
+        t.cancel();
+        _finalizeAlert();
+      }
+    });
+  }
+
+  // --------------------------------------------------------------------------
+  // COMPLETE ALERT
+  // --------------------------------------------------------------------------
+  Future<void> _finalizeAlert() async {
+    if (handled) return;
+    handled = true;
+
+    _stopSound();
+
+    await _markAlertHandled();
+    _goToHelpNotified();
+  }
+
   Future<void> _markAlertHandled() async {
     if (alertId == null) return;
 
@@ -93,12 +146,17 @@ class _AlertScreenState extends State<AlertScreen> {
         "handled_at": FieldValue.serverTimestamp(),
       });
     } catch (e) {
-      debugPrint("⚠️ Failed to update alert status: $e");
+      debugPrint("⚠️ Error marking alert handled: $e");
     }
   }
 
-  // Navigate to “Help Notified” screen
+  // --------------------------------------------------------------------------
+  // NAVIGATE TO HELP NOTIFIED
+  // --------------------------------------------------------------------------
   void _goToHelpNotified() {
+    if (redirected || !mounted) return;
+    redirected = true;
+
     Navigator.pushReplacementNamed(
       context,
       "/help-notified",
@@ -115,12 +173,19 @@ class _AlertScreenState extends State<AlertScreen> {
     );
   }
 
+  // --------------------------------------------------------------------------
+  // CANCEL BUTTON
+  // --------------------------------------------------------------------------
   void cancelAlert() {
     timer?.cancel();
-    if (alertId != null) _markAlertHandled();
-    Navigator.pop(context);
+    _stopSound();
+    _finalizeAlert();
+    if (Navigator.canPop(context)) Navigator.pop(context);
   }
 
+  // --------------------------------------------------------------------------
+  // UI
+  // --------------------------------------------------------------------------
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -147,7 +212,7 @@ class _AlertScreenState extends State<AlertScreen> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              // HEADER
+              // HEADER ICONS
               Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: const [
@@ -240,7 +305,6 @@ class _AlertScreenState extends State<AlertScreen> {
 
               const SizedBox(height: 26),
 
-              // CANCEL BTN
               ElevatedButton.icon(
                 onPressed: cancelAlert,
                 icon: const Icon(Icons.close, size: 18),

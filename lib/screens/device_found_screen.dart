@@ -9,20 +9,35 @@ class DeviceFoundScreen extends StatefulWidget {
   State<DeviceFoundScreen> createState() => _DeviceFoundScreenState();
 }
 
-class _DeviceFoundScreenState extends State<DeviceFoundScreen> {
+class _DeviceFoundScreenState extends State<DeviceFoundScreen>
+    with SingleTickerProviderStateMixin {
   String deviceId = "Loading...";
   bool deviceFound = false;
   bool deviceOnline = false;
-  bool _redirected = false; // protect from double-navigation
+  bool _redirected = false;
+
+  late AnimationController _progressController;
 
   @override
   void initState() {
     super.initState();
+
+    _progressController = AnimationController(
+      vsync: this,
+      duration: const Duration(seconds: 2),
+    )..forward();
+
     _checkPairedDevice();
   }
 
+  @override
+  void dispose() {
+    _progressController.dispose();
+    super.dispose();
+  }
+
   // ======================================================
-  // CHECK IF CAREGIVER HAS A PAIRED DEVICE (FINAL VERSION)
+  // CHECK IF DEVICE IS PAIRED & ONLINE
   // ======================================================
   Future<void> _checkPairedDevice() async {
     try {
@@ -30,98 +45,78 @@ class _DeviceFoundScreenState extends State<DeviceFoundScreen> {
       final caregiverId = prefs.getString("caregiverId") ?? "";
 
       if (caregiverId.isEmpty) {
-        setState(() {
-          deviceId = "No caregiver session";
-          deviceFound = false;
-        });
+        _showError("No caregiver session found");
         return;
       }
 
       final firestore = FirebaseFirestore.instance;
 
-      // Read caregiver profile
+      // → Check caregiver profile
       final caregiverDoc =
           await firestore.collection("caregivers").doc(caregiverId).get();
 
       if (!caregiverDoc.exists) {
-        setState(() {
-          deviceId = "No caregiver data";
-          deviceFound = false;
-        });
+        _showError("Caregiver profile missing");
         return;
       }
 
-      final data = caregiverDoc.data()!;
-      final pairedDevice = data["pairedDevice"];
+      final pairedDevice = caregiverDoc.data()!["pairedDevice"];
 
-      if (pairedDevice == null || pairedDevice.toString().trim().isEmpty) {
-        setState(() {
-          deviceId = "No Device Found";
-          deviceFound = false;
-        });
+      if (pairedDevice == null || pairedDevice.trim().isEmpty) {
+        _showError("No paired device");
         return;
       }
 
-      // Device exists in caregiver document
       setState(() {
         deviceId = pairedDevice;
         deviceFound = true;
       });
 
-      // Check device document
+      // → Check actual device document
       final deviceDoc =
           await firestore.collection("devices").doc(pairedDevice).get();
 
       if (!deviceDoc.exists) {
-        // Device invalid
-        setState(() {
-          deviceOnline = false;
-        });
-
         return _safeRedirect(() {
           Navigator.pushReplacementNamed(context, "/device-pairing");
         });
       }
 
-      // SAFE status reading
       final dev = deviceDoc.data()!;
-      String status = "offline";
+      DateTime? lastSync;
 
-      if (dev["status"] is String) {
-        status = dev["status"];
-      } else if (dev["status"] is Map) {
-        status = dev["status"]["stringValue"] ?? "offline";
+      if (dev["lastSync"] is Timestamp) {
+        lastSync = (dev["lastSync"] as Timestamp).toDate();
+      } else if (dev["lastSync"] is String) {
+        lastSync = DateTime.tryParse(dev["lastSync"]);
       }
 
-      setState(() {
-        deviceOnline = status.toLowerCase() == "online";
-      });
+      bool online = false;
+      if (lastSync != null) {
+        online = DateTime.now().difference(lastSync).inSeconds <= 20;
+      }
 
-      // ======================================================
-      // REDIRECT RULES
-      // ======================================================
-      if (deviceOnline) {
+      setState(() => deviceOnline = online);
+
+      // REDIRECT
+      if (online) {
         return _safeRedirect(() {
           Navigator.pushReplacementNamed(context, "/dashboard");
         });
       }
 
-      // Device offline → Go to connecting page
       return _safeRedirect(() {
-        Navigator.pushReplacementNamed(context, "/connecting-senra");
+        Navigator.pushReplacementNamed(context, "/connecting-to-senra");
       });
-
     } catch (e) {
+      _showError("Error loading device");
       debugPrint("DeviceFoundScreen Error: $e");
-
-      setState(() {
-        deviceFound = false;
-        deviceId = "Error Loading Device";
-      });
     }
   }
 
-  // Protect from double navigation
+  // ======================================================
+  // UI HELPERS
+  // ======================================================
   void _safeRedirect(VoidCallback action) {
     if (_redirected || !mounted) return;
     _redirected = true;
@@ -132,8 +127,15 @@ class _DeviceFoundScreenState extends State<DeviceFoundScreen> {
     });
   }
 
+  void _showError(String message) {
+    setState(() {
+      deviceFound = false;
+      deviceId = message;
+    });
+  }
+
   // ======================================================
-  // UI (UNCHANGED — CLEANED ONLY)
+  // UI
   // ======================================================
   @override
   Widget build(BuildContext context) {
@@ -153,7 +155,6 @@ class _DeviceFoundScreenState extends State<DeviceFoundScreen> {
                       onPressed: () => Navigator.pop(context),
                       icon: const Icon(Icons.arrow_back, color: Colors.white70),
                     ),
-                    const SizedBox(width: 4),
                     const Text(
                       "Device Pairing",
                       style: TextStyle(
@@ -177,22 +178,19 @@ class _DeviceFoundScreenState extends State<DeviceFoundScreen> {
                   ),
                 ),
 
-                const SizedBox(height: 6),
+                const SizedBox(height: 8),
 
-                // SUBTITLE
+                // SUBTEXT
                 Text(
                   deviceFound
                       ? (deviceOnline
-                          ? "Device active — Preparing dashboard"
-                          : "Ready to connect to $deviceId")
-                      : "We could not find any paired device.",
-                  style: const TextStyle(
-                    color: Colors.white70,
-                    fontSize: 14,
-                  ),
+                          ? "Device is online — Preparing dashboard"
+                          : "Setting up connection...")
+                      : "No paired device found.",
+                  style: const TextStyle(color: Colors.white70, fontSize: 14),
                 ),
 
-                const SizedBox(height: 25),
+                const SizedBox(height: 26),
 
                 // DEVICE CARD
                 Container(
@@ -203,9 +201,7 @@ class _DeviceFoundScreenState extends State<DeviceFoundScreen> {
                     borderRadius: BorderRadius.circular(14),
                   ),
                   child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      // Icon + Device ID Row
                       Row(
                         children: [
                           Container(
@@ -219,17 +215,18 @@ class _DeviceFoundScreenState extends State<DeviceFoundScreen> {
                                   ? Icons.error_outline
                                   : (deviceOnline
                                       ? Icons.check_circle
-                                      : Icons.bluetooth_searching),
+                                      : Icons.watch_outlined),
+                              size: 28,
                               color: deviceFound
                                   ? (deviceOnline
                                       ? Colors.greenAccent
-                                      : const Color(0xFF33B5FF))
+                                      : Colors.lightBlueAccent)
                                   : Colors.redAccent,
-                              size: 26,
                             ),
                           ),
-                          const SizedBox(width: 15),
+                          const SizedBox(width: 14),
 
+                          // Device name & ID
                           Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
@@ -237,90 +234,55 @@ class _DeviceFoundScreenState extends State<DeviceFoundScreen> {
                                 deviceId,
                                 style: const TextStyle(
                                   color: Colors.white,
-                                  fontWeight: FontWeight.bold,
                                   fontSize: 18,
+                                  fontWeight: FontWeight.w700,
                                 ),
                               ),
                               const SizedBox(height: 3),
                               Text(
                                 deviceFound
-                                    ? "Device ID: $deviceId"
+                                    ? "Checking status…"
                                     : "Please try pairing again",
                                 style: const TextStyle(
-                                  color: Colors.white54,
-                                  fontSize: 12,
-                                ),
-                              ),
+                                    color: Colors.white54, fontSize: 12),
+                              )
                             ],
                           ),
                         ],
                       ),
 
-                      if (deviceFound) ...[
-                        const SizedBox(height: 20),
-                        Container(height: 1, color: Colors.white12),
-                        const SizedBox(height: 20),
+                      const SizedBox(height: 25),
 
-                        // Battery + Status
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            const Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text("🔋 Battery Level",
-                                    style: TextStyle(
-                                        color: Colors.white70, fontSize: 12)),
-                                SizedBox(height: 4),
-                                Text("—",
-                                    style: TextStyle(
-                                        color: Colors.white,
-                                        fontWeight: FontWeight.w600)),
-                              ],
-                            ),
-                            Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                const Text("📶 Status",
-                                    style: TextStyle(
-                                        color: Colors.white70, fontSize: 12)),
-                                const SizedBox(height: 4),
-                                Text(
-                                  deviceOnline ? "Online" : "Offline",
-                                  style: const TextStyle(
-                                      color: Colors.white,
-                                      fontWeight: FontWeight.w600),
-                                ),
-                              ],
-                            ),
-                          ],
-                        ),
-                      ],
+                      // Progress bar
+                      AnimatedBuilder(
+                        animation: _progressController,
+                        builder: (_, __) {
+                          return LinearProgressIndicator(
+                            value: _progressController.value,
+                            minHeight: 6,
+                            color: const Color(0xFF33B5FF),
+                            backgroundColor: Colors.white12,
+                            borderRadius: BorderRadius.circular(10),
+                          );
+                        },
+                      ),
                     ],
                   ),
                 ),
 
                 const SizedBox(height: 40),
 
-                if (!deviceFound)
-                  const Text(
-                    "Please return to pairing and try again.",
-                    style: TextStyle(color: Colors.redAccent, fontSize: 14),
-                  )
-                else
-                  Column(
-                    children: const [
-                      SizedBox(height: 40),
-                      Align(
-                        alignment: Alignment.centerLeft,
-                        child: Text(
-                          "Connecting...",
-                          style:
-                              TextStyle(color: Colors.white70, fontSize: 14),
-                        ),
-                      ),
-                    ],
+                Text(
+                  deviceFound
+                      ? "Connecting…"
+                      : "Please return to pairing and try again.",
+                  style: TextStyle(
+                    color: deviceFound ? Colors.white70 : Colors.redAccent,
+                    fontSize: 14,
                   ),
+                ),
+
+                const SizedBox(height: 30),
               ],
             ),
           ),
