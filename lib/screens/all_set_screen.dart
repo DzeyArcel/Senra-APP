@@ -1,72 +1,113 @@
+// AllSetScreen.dart — FINAL FIXED VERSION (2025 Compatible with Firmware V14.x)
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 
-class AllSetScreen extends StatelessWidget {
+class AllSetScreen extends StatefulWidget {
   const AllSetScreen({super.key});
 
-  Future<void> _finishSetup(BuildContext context) async {
+  @override
+  State<AllSetScreen> createState() => _AllSetScreenState();
+}
+
+class _AllSetScreenState extends State<AllSetScreen> {
+  bool loading = false;
+
+  Future<void> _finishSetup() async {
+    setState(() => loading = true);
+
     final prefs = await SharedPreferences.getInstance();
-
-    // Mark onboarding complete
-    await prefs.setBool("onboarding_complete", true);
-
-    // Validate paired device
+    final caregiverId = prefs.getString("caregiverId") ?? "";
     final deviceId = prefs.getString("pairedDevice") ?? "";
-    if (deviceId.isEmpty) {
-      // fallback: return to DevicePairing
-      if (context.mounted) {
-        Navigator.pushNamedAndRemoveUntil(
-          context,
-          "/device-pairing",
-          (route) => false,
-        );
-      }
-      return;
+
+    // ============================================================
+    // MARK ONBOARDING COMPLETE + WIFI SETUP COMPLETE
+    // ============================================================
+    await prefs.setBool("onboarding_complete", true);
+    await prefs.setBool("needsWifiSetup", false);   // 🔥 REQUIRED FIX
+
+    // ============================================================
+    // VALIDATE CAREGIVER
+    // ============================================================
+    if (caregiverId.isEmpty) {
+      return _go("/caregiver-info");
     }
 
-    // Check device online state (lastSync rule)
-    final snap = await FirebaseFirestore.instance
-        .collection("devices")
-        .doc(deviceId)
+    final cgSnap = await FirebaseFirestore.instance
+        .collection("caregivers")
+        .doc(caregiverId)
         .get();
 
-    if (!snap.exists) {
-      // Device deleted or not yet registered → go to device-connected
-      if (context.mounted) {
-        Navigator.pushNamedAndRemoveUntil(
-          context,
-          "/device-connected",
-          (route) => false,
-        );
-      }
-      return;
+    if (!cgSnap.exists) {
+      await prefs.clear();
+      return _go("/caregiver-info");
     }
 
-    final raw = snap.data()!;
-    bool online = false;
+    // ============================================================
+    // VALIDATE DEVICE
+    // ============================================================
+    if (deviceId.isEmpty) return _go("/device-pairing");
 
-    final rawLastSync = raw["lastSync"];
+    final devRef =
+        FirebaseFirestore.instance.collection("devices").doc(deviceId);
+    final devSnap = await devRef.get();
+
+    if (!devSnap.exists) return _go("/device-connected");
+
+    final data = devSnap.data()!;
+    final rawLastSync = data["lastSync"];
+
     DateTime? lastSync;
-
     if (rawLastSync is Timestamp) lastSync = rawLastSync.toDate();
     if (rawLastSync is String) lastSync = DateTime.tryParse(rawLastSync);
 
+    bool isOnline = false;
     if (lastSync != null) {
       final diff = DateTime.now().difference(lastSync).inSeconds;
-      online = diff <= 20;
+      isOnline = diff <= 20;
     }
 
-    // 🔥 FINAL ROUTING LOGIC
-    if (context.mounted) {
-      Navigator.pushNamedAndRemoveUntil(
-        context,
-        online ? "/dashboard" : "/device-connected",
-        (route) => false,
-      );
+    // ============================================================
+    // SAFETY: CLEAR adminCommand
+    // ============================================================
+    await devRef.update({"adminCommand": ""});
+
+    // ============================================================
+    // DEVICE ONLINE → GO TO DASHBOARD
+    // ============================================================
+    if (isOnline) return _go("/dashboard");
+
+    // ============================================================
+    // DEVICE STILL CONNECTING → WAIT 2 SECONDS
+    // ============================================================
+    await Future.delayed(const Duration(seconds: 2));
+
+    final retrySnap = await devRef.get();
+    final retryRaw = retrySnap.data()?["lastSync"];
+
+    DateTime? retryTime;
+    if (retryRaw is Timestamp) retryTime = retryRaw.toDate();
+    if (retryRaw is String) retryTime = DateTime.tryParse(retryRaw);
+
+    if (retryTime != null &&
+        DateTime.now().difference(retryTime).inSeconds <= 20) {
+      return _go("/dashboard");
     }
+
+    return _go("/device-connected");
   }
 
+  // ============================================================
+  // NAVIGATION HELPER
+  // ============================================================
+  void _go(String route) {
+    if (!mounted) return;
+    Navigator.pushNamedAndRemoveUntil(context, route, (route) => false);
+  }
+
+  // ============================================================
+  // UI
+  // ============================================================
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -77,7 +118,7 @@ class AllSetScreen extends StatelessWidget {
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              // CHECKMARK
+              // Checkmark
               Container(
                 padding: const EdgeInsets.all(32),
                 decoration: BoxDecoration(
@@ -113,7 +154,7 @@ class AllSetScreen extends StatelessWidget {
               const SizedBox(height: 12),
 
               const Text(
-                "Senra is now connected and keeping\nwatch.",
+                "Senra is now connected and keeping\nwatch over your loved one.",
                 textAlign: TextAlign.center,
                 style: TextStyle(
                   color: Colors.white70,
@@ -125,23 +166,32 @@ class AllSetScreen extends StatelessWidget {
               const SizedBox(height: 50),
 
               GestureDetector(
-                onTap: () => _finishSetup(context),
+                onTap: loading ? null : _finishSetup,
                 child: Container(
                   width: double.infinity,
                   padding: const EdgeInsets.symmetric(vertical: 15),
                   decoration: BoxDecoration(
-                    color: const Color(0xFF33B5FF),
+                    color: loading ? Colors.grey : const Color(0xFF33B5FF),
                     borderRadius: BorderRadius.circular(30),
                   ),
-                  child: const Center(
-                    child: Text(
-                      "Go to Dashboard",
-                      style: TextStyle(
-                        color: Colors.black87,
-                        fontWeight: FontWeight.w600,
-                        fontSize: 16,
-                      ),
-                    ),
+                  child: Center(
+                    child: loading
+                        ? const SizedBox(
+                            height: 22,
+                            width: 22,
+                            child: CircularProgressIndicator(
+                              color: Colors.black,
+                              strokeWidth: 2,
+                            ),
+                          )
+                        : const Text(
+                            "Go to Dashboard",
+                            style: TextStyle(
+                              color: Colors.black87,
+                              fontWeight: FontWeight.w600,
+                              fontSize: 16,
+                            ),
+                          ),
                   ),
                 ),
               ),

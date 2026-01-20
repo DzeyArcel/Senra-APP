@@ -1,3 +1,7 @@
+// ============================================================
+// WifiConfigScreen.dart — FINAL FIX (LASTSYNC SOURCE OF TRUTH)
+// ============================================================
+
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -12,12 +16,11 @@ class WifiConfigScreen extends StatefulWidget {
 }
 
 class _WifiConfigScreenState extends State<WifiConfigScreen> {
-  String statusText =
-      "Requesting Senra to enter Wi-Fi setup mode…\nPlease wait.";
-  bool waitingForReconnect = false;
+  String statusText = "Preparing Senra Wi-Fi setup. Please wait…";
 
   String? deviceId;
   StreamSubscription? sub;
+  bool listening = false;
 
   @override
   void initState() {
@@ -32,88 +35,123 @@ class _WifiConfigScreenState extends State<WifiConfigScreen> {
   }
 
   // ============================================================
-  // MAIN SEQUENCE
+  // BACK
+  // ============================================================
+  Future<void> _handleBack() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool("needsWifiSetup", true);
+    await sub?.cancel();
+
+    if (!mounted) return;
+    Navigator.pop(context);
+  }
+
+  // ============================================================
+  // MAIN FLOW
   // ============================================================
   Future<void> _startFlow() async {
     final prefs = await SharedPreferences.getInstance();
     deviceId = prefs.getString("pairedDevice");
 
-    if (deviceId == null) {
-      setState(() => statusText = "No device paired.");
+    if (deviceId == null || deviceId!.isEmpty) {
+      setState(() => statusText = "No paired device found.");
       return;
     }
 
-    // 1️⃣ Tell firmware to enter setup mode
-    await FirebaseFirestore.instance
-        .collection("devices")
-        .doc(deviceId)
-        .update({"adminCommand": "reset_wifi"});
+    final ref =
+        FirebaseFirestore.instance.collection("devices").doc(deviceId);
+
+    // 🔍 CHECK IF DEVICE IS ALREADY ONLINE (LASTSYNC ONLY)
+    final snap = await ref.get();
+    final data = snap.data() ?? {};
+    final lastSync = data["lastSync"];
+
+    DateTime? t;
+    if (lastSync is Timestamp) t = lastSync.toDate();
+    if (lastSync is String) t = DateTime.tryParse(lastSync);
+
+    final online =
+        t != null && DateTime.now().difference(t).inSeconds <= 20;
+
+    if (online) {
+      await prefs.setBool("needsWifiSetup", false);
+      if (!mounted) return;
+      Navigator.pushReplacementNamed(context, "/dashboard");
+      return;
+    }
+
+    // 🔁 REQUEST WIFI RESET
+    await ref.update({"adminCommand": "reset_wifi"});
 
     setState(() {
       statusText =
-          "Senra is switching to Wi-Fi setup mode…\nThis may take a few seconds.";
+          "Senra is in setup mode.\n\n"
+          "1. Connect to SENRA-Setup Wi-Fi\n"
+          "2. Enter your Wi-Fi credentials\n"
+          "3. Return here and wait";
     });
 
-    // Begin listening for reconnect
-    _startReconnectListener();
+    _listenForReconnect();
   }
 
   // ============================================================
-  // LISTEN FOR DEVICE COMING BACK ONLINE
+  // LISTEN FOR DEVICE COMING ONLINE
   // ============================================================
-  void _startReconnectListener() {
-    if (deviceId == null) return;
+  void _listenForReconnect() {
+    if (deviceId == null || listening) return;
+    listening = true;
 
-    final ref = FirebaseFirestore.instance.collection("devices").doc(deviceId);
+    final ref =
+        FirebaseFirestore.instance.collection("devices").doc(deviceId);
 
-    sub = ref.snapshots().listen((snap) {
-      if (!waitingForReconnect) return;
-
+    sub = ref.snapshots().listen((snap) async {
       if (!snap.exists) return;
 
       final data = snap.data() ?? {};
-      final wifi = data["wifiName"] ?? "";
-      final status = data["status"] ?? "";
       final lastSync = data["lastSync"];
 
-      if (wifi.toString().isNotEmpty && status == "online") {
-        Navigator.pushReplacementNamed(context, "/all-set");
-      }
+      DateTime? t;
+      if (lastSync is Timestamp) t = lastSync.toDate();
+      if (lastSync is String) t = DateTime.tryParse(lastSync);
+
+      final online =
+          t != null && DateTime.now().difference(t).inSeconds <= 20;
+
+      if (!online) return;
+
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool("needsWifiSetup", false);
+      await ref.update({"adminCommand": ""});
+
+      if (!mounted) return;
+      Navigator.pushReplacementNamed(context, "/dashboard");
     });
   }
 
   // ============================================================
-  // OPEN WiFi SETTINGS
+  // OPEN WIFI SETTINGS
   // ============================================================
   Future<void> _openWifiSettings() async {
     await launchUrl(Uri.parse("App-Prefs:root=WIFI"));
   }
 
   // ============================================================
-  // OPEN SETUP PAGE AFTER USER CONNECTED
+  // OPEN ESP32 PAGE
   // ============================================================
   Future<void> _openSetupPage() async {
     const url = "http://192.168.4.1";
 
-    setState(() {
-      statusText = "Opening Senra setup page…\nEnter Wi-Fi credentials.";
-    });
-
-    await Future.delayed(const Duration(milliseconds: 300));
+    setState(() => statusText = "Opening Senra setup page…");
 
     try {
-      await launchUrl(Uri.parse(url), mode: LaunchMode.inAppBrowserView);
+      await launchUrl(Uri.parse(url),
+          mode: LaunchMode.inAppBrowserView);
 
-      setState(() {
-        waitingForReconnect = true;
-        statusText =
-            "When finished, Senra will reconnect.\nPlease wait…";
-      });
-    } catch (e) {
-      setState(() {
-        statusText =
-            "Failed to open setup page.\nPlease ensure you're connected to SENRA-Setup Wi-Fi.";
-      });
+      setState(() =>
+          statusText = "Waiting for Senra to reconnect…");
+    } catch (_) {
+      setState(() => statusText =
+          "Failed to open setup page.\nConnect to SENRA-Setup Wi-Fi.");
     }
   }
 
@@ -131,10 +169,9 @@ class _WifiConfigScreenState extends State<WifiConfigScreen> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               IconButton(
-                onPressed: () => Navigator.pop(context),
+                onPressed: _handleBack,
                 icon: const Icon(Icons.arrow_back, color: Colors.white70),
               ),
-
               const SizedBox(height: 10),
 
               Container(
@@ -146,22 +183,21 @@ class _WifiConfigScreenState extends State<WifiConfigScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Row(
-                      children: const [
+                    const Row(
+                      children: [
                         Icon(Icons.wifi, color: Color(0xFF33B5FF)),
                         SizedBox(width: 8),
                         Text(
-                          "Change Wi-Fi Network",
+                          "Connect Senra to Wi-Fi",
                           style: TextStyle(
-                              color: Colors.white,
-                              fontSize: 18,
-                              fontWeight: FontWeight.w700),
+                            color: Colors.white,
+                            fontSize: 18,
+                            fontWeight: FontWeight.w700,
+                          ),
                         ),
                       ],
                     ),
-
                     const SizedBox(height: 16),
-
                     Text(
                       statusText,
                       style: const TextStyle(
@@ -170,31 +206,17 @@ class _WifiConfigScreenState extends State<WifiConfigScreen> {
                         height: 1.5,
                       ),
                     ),
-
                     const SizedBox(height: 18),
-
-                    // ==============================
-                    // STEP BUTTONS
-                    // ==============================
                     ElevatedButton(
                       onPressed: _openWifiSettings,
                       style: _btn,
                       child: const Text("1. Open Wi-Fi Settings"),
                     ),
-
                     const SizedBox(height: 12),
-
                     ElevatedButton(
                       onPressed: _openSetupPage,
                       style: _btn,
                       child: const Text("2. Continue to Setup Page"),
-                    ),
-
-                    const SizedBox(height: 20),
-
-                    const Text(
-                      "Make sure to connect to:\nWi-Fi: SENRA-Setup",
-                      style: TextStyle(color: Colors.white38, fontSize: 12),
                     ),
                   ],
                 ),
@@ -208,8 +230,9 @@ class _WifiConfigScreenState extends State<WifiConfigScreen> {
 
   ButtonStyle get _btn => ElevatedButton.styleFrom(
         backgroundColor: const Color(0xFF33B5FF),
-        foregroundColor: Colors.white,
+        foregroundColor: Colors.black,
         padding: const EdgeInsets.symmetric(vertical: 12),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        shape:
+            RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
       );
 }

@@ -23,12 +23,12 @@ class _EditContactScreenState extends State<EditContactScreen> {
   @override
   void initState() {
     super.initState();
-    // Wait until context exists, then read arguments
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _loadFromArgs();
-    });
+    WidgetsBinding.instance.addPostFrameCallback((_) => _loadFromArgs());
   }
 
+  // ============================================================
+  // LOAD ARGUMENTS + CAREGIVER ID
+  // ============================================================
   Future<void> _loadFromArgs() async {
     final args =
         ModalRoute.of(context)?.settings.arguments as Map<String, dynamic>?;
@@ -45,6 +45,9 @@ class _EditContactScreenState extends State<EditContactScreen> {
     setState(() => loading = false);
   }
 
+  // ============================================================
+  // SAVE CONTACT CHANGES
+  // ============================================================
   Future<void> _saveChanges() async {
     if (caregiverId.isEmpty || contactId.isEmpty) return;
 
@@ -56,8 +59,7 @@ class _EditContactScreenState extends State<EditContactScreen> {
     if (name.isEmpty || phone.isEmpty || relation.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content:
-              Text("Name, phone, and relationship are required."),
+          content: Text("Name, phone, and relationship are required."),
           backgroundColor: Colors.redAccent,
         ),
       );
@@ -94,6 +96,9 @@ class _EditContactScreenState extends State<EditContactScreen> {
     if (mounted) setState(() => saving = false);
   }
 
+  // ============================================================
+  // DELETE CONTACT
+  // ============================================================
   Future<void> _deleteContact() async {
     if (caregiverId.isEmpty || contactId.isEmpty) return;
 
@@ -101,9 +106,7 @@ class _EditContactScreenState extends State<EditContactScreen> {
       context: context,
       builder: (context) => AlertDialog(
         backgroundColor: const Color(0xFF162233),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(16),
-        ),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         title: const Center(
           child: Text(
             "Delete Contact?",
@@ -124,7 +127,6 @@ class _EditContactScreenState extends State<EditContactScreen> {
           GestureDetector(
             onTap: () => Navigator.pop(context, true),
             child: Container(
-              width: double.infinity,
               padding: const EdgeInsets.symmetric(vertical: 14),
               decoration: BoxDecoration(
                 color: Colors.redAccent,
@@ -133,10 +135,7 @@ class _EditContactScreenState extends State<EditContactScreen> {
               child: const Center(
                 child: Text(
                   "Delete Contact",
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.w600,
-                  ),
+                  style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
                 ),
               ),
             ),
@@ -175,6 +174,9 @@ class _EditContactScreenState extends State<EditContactScreen> {
     Navigator.pop(context);
   }
 
+  // ============================================================
+  // UI
+  // ============================================================
   @override
   Widget build(BuildContext context) {
     if (loading) {
@@ -194,7 +196,6 @@ class _EditContactScreenState extends State<EditContactScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // TOP BAR
               Row(
                 children: [
                   IconButton(
@@ -220,9 +221,7 @@ class _EditContactScreenState extends State<EditContactScreen> {
               ),
               const SizedBox(height: 20),
 
-              // MAIN CARD
               Container(
-                width: double.infinity,
                 padding: const EdgeInsets.all(18),
                 decoration: BoxDecoration(
                   color: const Color(0xFF162233),
@@ -231,22 +230,6 @@ class _EditContactScreenState extends State<EditContactScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text(
-                      "Basic Information",
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 16,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    const Text(
-                      "Update the contact's personal details",
-                      style:
-                          TextStyle(color: Colors.white54, fontSize: 13),
-                    ),
-                    const SizedBox(height: 18),
-
                     _label("Full Name *"),
                     _inputField(controller: nameController),
                     const SizedBox(height: 16),
@@ -267,15 +250,13 @@ class _EditContactScreenState extends State<EditContactScreen> {
 
               const SizedBox(height: 20),
 
-              // BUTTONS
               Row(
                 children: [
                   Expanded(
                     child: GestureDetector(
                       onTap: saving ? null : _saveChanges,
                       child: Container(
-                        padding:
-                            const EdgeInsets.symmetric(vertical: 14),
+                        padding: const EdgeInsets.symmetric(vertical: 14),
                         decoration: BoxDecoration(
                           color: const Color(0xFF33B5FF),
                           borderRadius: BorderRadius.circular(10),
@@ -284,9 +265,7 @@ class _EditContactScreenState extends State<EditContactScreen> {
                           child: Text(
                             saving ? "Saving..." : "Save Changes",
                             style: const TextStyle(
-                              color: Colors.black87,
-                              fontWeight: FontWeight.w600,
-                            ),
+                                color: Colors.black87, fontWeight: FontWeight.w600),
                           ),
                         ),
                       ),
@@ -297,58 +276,23 @@ class _EditContactScreenState extends State<EditContactScreen> {
                     child: GestureDetector(
                       onTap: _deleteContact,
                       child: Container(
-                        padding:
-                            const EdgeInsets.symmetric(vertical: 14),
+                        padding: const EdgeInsets.symmetric(vertical: 14),
                         decoration: BoxDecoration(
-                          borderRadius: BorderRadius.circular(10),
                           border: Border.all(color: Colors.redAccent),
+                          borderRadius: BorderRadius.circular(10),
                         ),
                         child: const Center(
                           child: Text(
                             "Delete Contact",
                             style: TextStyle(
-                              color: Colors.redAccent,
-                              fontWeight: FontWeight.w600,
-                            ),
+                                color: Colors.redAccent,
+                                fontWeight: FontWeight.w600),
                           ),
                         ),
                       ),
                     ),
                   ),
                 ],
-              ),
-
-              const SizedBox(height: 24),
-
-              // TIPS CARD
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.all(18),
-                decoration: BoxDecoration(
-                  color: const Color(0xFF162233),
-                  borderRadius: BorderRadius.circular(14),
-                ),
-                child: const Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      "Contact Tips",
-                      style: TextStyle(
-                          color: Color(0xFF33B5FF),
-                          fontSize: 16,
-                          fontWeight: FontWeight.w700),
-                    ),
-                    SizedBox(height: 10),
-                    _Bullet(
-                        "• Ensure phone numbers are current and reachable"),
-                    SizedBox(height: 6),
-                    _Bullet(
-                        "• Use complete names for easy identification"),
-                    SizedBox(height: 6),
-                    _Bullet(
-                        "• Keep relationship descriptions clear and specific"),
-                  ],
-                ),
               ),
 
               const SizedBox(height: 40),
@@ -359,6 +303,9 @@ class _EditContactScreenState extends State<EditContactScreen> {
     );
   }
 
+  // ============================================================
+  // UI HELPERS
+  // ============================================================
   Widget _label(String text) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 6),
@@ -380,25 +327,9 @@ class _EditContactScreenState extends State<EditContactScreen> {
         style: const TextStyle(color: Colors.white),
         decoration: const InputDecoration(
           border: InputBorder.none,
-          contentPadding:
-              EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-          hintStyle: TextStyle(color: Colors.white38),
+          contentPadding: EdgeInsets.symmetric(horizontal: 14, vertical: 12),
         ),
       ),
-    );
-  }
-}
-
-class _Bullet extends StatelessWidget {
-  final String text;
-  const _Bullet(this.text);
-
-  @override
-  Widget build(BuildContext context) {
-    return Text(
-      text,
-      style:
-          const TextStyle(color: Colors.white70, height: 1.4, fontSize: 13),
     );
   }
 }

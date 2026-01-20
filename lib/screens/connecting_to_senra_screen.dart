@@ -1,7 +1,11 @@
+// ============================================================
+// ConnectingToSenraScreen — FINAL ECOSYSTEM-SAFE VERSION
+// ============================================================
+
 import 'dart:async';
 import 'package:flutter/material.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 
 class ConnectingToSenraScreen extends StatefulWidget {
   const ConnectingToSenraScreen({super.key});
@@ -12,91 +16,67 @@ class ConnectingToSenraScreen extends StatefulWidget {
 }
 
 class _ConnectingToSenraScreenState extends State<ConnectingToSenraScreen> {
-  String? deviceId;
-  StreamSubscription? sub;
+  StreamSubscription? deviceSub;
   bool redirected = false;
 
   @override
   void initState() {
     super.initState();
-    _startMonitoring();
+    _listenForDeviceOnline();
+  }
+
+  // ============================================================
+  // 🔍 WAIT FOR DEVICE TO COME ONLINE
+  // ============================================================
+  Future<void> _listenForDeviceOnline() async {
+    final prefs = await SharedPreferences.getInstance();
+    final deviceId = prefs.getString("pairedDevice") ?? "";
+
+    if (deviceId.isEmpty) {
+      _go("/device-pairing");
+      return;
+    }
+
+    deviceSub = FirebaseFirestore.instance
+        .collection("devices")
+        .doc(deviceId)
+        .snapshots()
+        .listen((snap) async {
+      if (!snap.exists) return;
+
+      final data = snap.data()!;
+      final lastSync = data["lastSync"];
+
+      DateTime? t;
+      if (lastSync is Timestamp) t = lastSync.toDate();
+      if (lastSync is String) t = DateTime.tryParse(lastSync);
+
+      if (t == null) return;
+
+      final online =
+          DateTime.now().difference(t).inSeconds <= 20;
+
+      if (!online) return;
+
+      // ✅ DEVICE ONLINE — CLEAR WIFI FLAG
+      await prefs.setBool("needsWifiSetup", false);
+
+      // ✅ LET STARTUP ROUTER DECIDE FINAL SCREEN
+      _go("/startup");
+    });
+  }
+
+  void _go(String route) {
+    if (!mounted || redirected) return;
+    redirected = true;
+    deviceSub?.cancel();
+    Navigator.pushReplacementNamed(context, route);
   }
 
   @override
   void dispose() {
-    sub?.cancel();
+    deviceSub?.cancel();
     super.dispose();
-  }
-
-  // ============================================================
-  // START WATCHING DEVICE STATUS (FINAL SENRA LOGIC)
-  // ============================================================
-  Future<void> _startMonitoring() async {
-    final prefs = await SharedPreferences.getInstance();
-    deviceId = prefs.getString("pairedDevice");
-
-    if (deviceId == null || deviceId!.isEmpty) return;
-
-    final ref =
-        FirebaseFirestore.instance.collection("devices").doc(deviceId);
-
-    sub = ref.snapshots().listen((snap) {
-      if (!snap.exists || redirected) return;
-
-      final data = snap.data() ?? {};
-
-      // -------- WIFI NAME SAFE READ --------
-      final wifi = data["wifiName"] ?? data["wifi"] ?? "";
-
-      // -------- lastSync SAFE READ --------
-      DateTime? lastSync;
-      final rawSync = data["lastSync"];
-
-      if (rawSync is Timestamp) lastSync = rawSync.toDate();
-      if (rawSync is String) lastSync = DateTime.tryParse(rawSync);
-
-      bool online = false;
-
-      if (lastSync != null) {
-        final diff = DateTime.now().difference(lastSync).inSeconds;
-        online = diff <= 20; // ecosystem online rule
-      }
-
-      // ============================================================
-      // FINAL OFFICIAL SENRA ROUTING LOGIC
-      // ============================================================
-      //
-      // 1️⃣ If device already has WiFi → dashboard
-      // 2️⃣ If device is online (but no WiFi yet) → WiFi Config
-      // 3️⃣ Otherwise → stay in connecting screen
-      //
-      // ============================================================
-
-      if (wifi.toString().isNotEmpty) {
-        _go("/dashboard");
-      } else if (online) {
-        _go("/wifi-config");
-      }
-    });
-
-    // ============================================================
-    // SAFETY AUTO-ROUTE → WiFi Config after 6 seconds
-    // Prevents freezing if device takes long to sync
-    // ============================================================
-    Future.delayed(const Duration(seconds: 6), () {
-      if (!mounted || redirected) return;
-      _go("/wifi-config");
-    });
-  }
-
-  // ============================================================
-  // SAFE NAVIGATION WRAPPER
-  // ============================================================
-  void _go(String route) {
-    if (!mounted || redirected) return;
-
-    redirected = true;
-    Navigator.pushReplacementNamed(context, route);
   }
 
   // ============================================================
@@ -109,17 +89,17 @@ class _ConnectingToSenraScreenState extends State<ConnectingToSenraScreen> {
       body: Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
-          children: const [
-            SizedBox(
-              width: 50,
-              height: 50,
+          children: [
+            const SizedBox(
+              width: 48,
+              height: 48,
               child: CircularProgressIndicator(
                 color: Color(0xFF33B5FF),
                 strokeWidth: 4,
               ),
             ),
-            SizedBox(height: 30),
-            Text(
+            const SizedBox(height: 24),
+            const Text(
               "Connecting to Senra…",
               style: TextStyle(
                 color: Colors.white,
@@ -127,10 +107,23 @@ class _ConnectingToSenraScreenState extends State<ConnectingToSenraScreen> {
                 fontWeight: FontWeight.w700,
               ),
             ),
-            SizedBox(height: 8),
-            Text(
-              "Waiting for your device to power on.",
+            const SizedBox(height: 8),
+            const Text(
+              "Waiting for device to come online",
               style: TextStyle(color: Colors.white70),
+            ),
+            const SizedBox(height: 28),
+
+            // Manual fallback
+            TextButton(
+              onPressed: () => _go("/wifi-config"),
+              child: const Text(
+                "Set up Wi-Fi again",
+                style: TextStyle(
+                  color: Color(0xFF33B5FF),
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
             ),
           ],
         ),

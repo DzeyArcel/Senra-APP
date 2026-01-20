@@ -1,12 +1,19 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
-import 'package:senra_app/firebase_options.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
 
-// Startup Router
+import 'firebase_options.dart';
 import 'startup_router.dart';
 
-// SCREENS
+// 🔔 Background handler
+import 'services/senra_bg_handler.dart';
+
+// 🔔 Notification channel
+import 'services/notification_channel.dart';
+
+// Screens
 import 'screens/welcome_screen.dart';
+import 'screens/phone_auth_screen.dart'; // ✅ ADDED
 import 'screens/caregiver_info_screen.dart';
 import 'screens/device_pairing_screen.dart';
 import 'screens/device_found_screen.dart';
@@ -14,7 +21,6 @@ import 'screens/device_connected_screen.dart';
 import 'screens/connecting_to_senra_screen.dart';
 import 'screens/wifi_config_screen.dart';
 import 'screens/all_set_screen.dart';
-
 import 'screens/dashboard_screen.dart';
 import 'screens/settings_screen.dart';
 import 'screens/manage_device_screen.dart';
@@ -23,15 +29,56 @@ import 'screens/emergency_contacts_screen.dart';
 import 'screens/edit_contact_screen.dart';
 import 'screens/location_tracking_screen.dart';
 import 'screens/activity_history_screen.dart';
-
 import 'screens/alert_screen.dart';
 import 'screens/help_notified_screen.dart';
 
-void main() async {
+final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
+
+Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // 🔥 Firebase init
   await Firebase.initializeApp(
     options: DefaultFirebaseOptions.currentPlatform,
   );
+
+  // 🔔 REQUIRED for background & killed notifications
+  FirebaseMessaging.onBackgroundMessage(senraBgHandler);
+
+  // 🔔 REQUIRED notification channel
+  await setupNotificationChannel();
+
+  // 🔔 Android 13+ permission
+  await FirebaseMessaging.instance.requestPermission(
+    alert: true,
+    badge: true,
+    sound: true,
+  );
+
+  // 🔔 Foreground heads-up permission
+  await FirebaseMessaging.instance.setForegroundNotificationPresentationOptions(
+    alert: true,
+    badge: true,
+    sound: true,
+  );
+
+  // 🔔 FOREGROUND LISTENER (LOG ONLY)
+  FirebaseMessaging.onMessage.listen((RemoteMessage message) {
+    debugPrint("📲 FOREGROUND MESSAGE: ${message.notification?.title}");
+  });
+
+  // 🔔 APP OPENED FROM BACKGROUND
+  FirebaseMessaging.onMessageOpenedApp.listen((RemoteMessage message) {
+    debugPrint("📲 OPENED FROM BACKGROUND");
+  });
+
+  // 🔔 APP OPENED FROM KILLED STATE
+  final RemoteMessage? initialMessage =
+      await FirebaseMessaging.instance.getInitialMessage();
+
+  if (initialMessage != null) {
+    debugPrint("📲 OPENED FROM KILLED STATE");
+  }
 
   runApp(const SenraApp());
 }
@@ -42,18 +89,29 @@ class SenraApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
+      navigatorKey: navigatorKey,
       debugShowCheckedModeBanner: false,
 
-      // ------------------------------------------------------------
-      // 🚀 onGenerateRoute — Needed for passing alert arguments
-      // ------------------------------------------------------------
-      onGenerateRoute: (RouteSettings settings) {
-        final args = settings.arguments;
-
+      // ============================================================
+      // DYNAMIC ROUTES
+      // ============================================================
+      onGenerateRoute: (settings) {
         switch (settings.name) {
           case '/alert':
+            final args = settings.arguments as Map<String, dynamic>? ?? {};
             return MaterialPageRoute(
-              builder: (_) => const AlertScreen(),
+              builder: (_) => AlertScreen(
+                alertId: args['alertId'],
+                deviceId: args['deviceId'],
+                location: args['location'] ?? 'Unknown location',
+                lat: (args['lat'] ?? 0.0).toDouble(),
+                lng: (args['lng'] ?? 0.0).toDouble(),
+                mapURL: args['mapURL'] ?? '',
+                fallType: args['fallType'] ?? 'Fall Detected',
+                contacts:
+                    (args['contacts'] ?? []).cast<Map<String, String>>(),
+                startSeconds: args['startSeconds'] ?? 8,
+              ),
             );
 
           case '/help-notified':
@@ -66,14 +124,20 @@ class SenraApp extends StatelessWidget {
         }
       },
 
-      // ------------------------------------------------------------
+      // ============================================================
       // STATIC ROUTES
-      // ------------------------------------------------------------
+      // ============================================================
       routes: {
-        '/welcome': (_) => const WelcomeScreen(),
         '/startup': (_) => const StartupRouter(),
+        '/welcome': (_) => const WelcomeScreen(),
 
+        // 🔐 AUTH (NEW)
+        '/phone-auth': (_) => const PhoneAuthScreen(),
+
+        // 👤 PROFILE
         '/caregiver-info': (_) => const CaregiverInfoScreen(),
+
+        // 🔗 DEVICE FLOW
         '/device-pairing': (_) => const DevicePairingScreen(),
         '/device-found': (_) => const DeviceFoundScreen(),
         '/device-connected': (_) => const DeviceConnectedScreen(),
@@ -81,6 +145,7 @@ class SenraApp extends StatelessWidget {
         '/wifi-config': (_) => const WifiConfigScreen(),
         '/all-set': (_) => const AllSetScreen(),
 
+        // 🏠 MAIN
         '/dashboard': (_) => const DashboardScreen(),
         '/settings': (_) => const SettingsScreen(),
         '/manage-device': (_) => const ManageDeviceScreen(),

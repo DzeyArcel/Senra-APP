@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 class ActivityHistoryScreen extends StatelessWidget {
@@ -10,45 +11,56 @@ class ActivityHistoryScreen extends StatelessWidget {
     return Scaffold(
       backgroundColor: const Color(0xFF0E1625),
       body: SafeArea(
-        child: FutureBuilder<String?>(
-          future: _getPairedDeviceId(),
+        child: FutureBuilder<Map<String, String?>>(
+          future: _getSession(),
           builder: (context, snap) {
             if (snap.connectionState == ConnectionState.waiting) {
               return const Center(
-                child: CircularProgressIndicator(color: Colors.blueAccent),
+                child: CircularProgressIndicator(color: Color(0xFF33B5FF)),
               );
             }
 
-            final deviceId = snap.data;
+            final caregiverId = snap.data?["caregiverId"];
+            final deviceId = snap.data?["deviceId"];
 
-            if (deviceId == null) {
+            if (caregiverId == null || deviceId == null) {
               return const Center(
                 child: Text(
-                  "No linked device found.",
-                  style: TextStyle(color: Colors.white),
+                  "No caregiver or device session found.",
+                  style: TextStyle(color: Colors.white70),
                 ),
               );
             }
 
-            return _buildHistory(context, deviceId);
+            return _historyStream(context, deviceId);
           },
         ),
       ),
     );
   }
 
-  // ================================
-  // READ deviceId from SharedPrefs
-  // ================================
-  Future<String?> _getPairedDeviceId() async {
+  // =========================================================
+  // 🔐 SESSION — AUTH IS SOURCE OF TRUTH
+  // =========================================================
+  Future<Map<String, String?>> _getSession() async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return {};
+
     final prefs = await SharedPreferences.getInstance();
-    return prefs.getString("pairedDevice");
+    final deviceId = prefs.getString("pairedDevice");
+
+    if (deviceId == null || deviceId.isEmpty) return {};
+
+    return {
+      "caregiverId": user.uid,
+      "deviceId": deviceId.replaceAll('"', '').trim(),
+    };
   }
 
-  // ================================
-  // FIRESTORE STREAM
-  // ================================
-  Widget _buildHistory(BuildContext context, String deviceId) {
+  // =========================================================
+  // 🔁 ACTIVITY STREAM (DEVICE-BASED, SHARED-SAFE)
+  // =========================================================
+  Widget _historyStream(BuildContext context, String deviceId) {
     return StreamBuilder<QuerySnapshot>(
       stream: FirebaseFirestore.instance
           .collection("alerts")
@@ -56,13 +68,13 @@ class ActivityHistoryScreen extends StatelessWidget {
           .orderBy("timestamp", descending: true)
           .snapshots(),
       builder: (context, snap) {
-        if (snap.connectionState == ConnectionState.waiting) {
+        if (!snap.hasData) {
           return const Center(
-            child: CircularProgressIndicator(color: Colors.blueAccent),
+            child: CircularProgressIndicator(color: Color(0xFF33B5FF)),
           );
         }
 
-        final docs = snap.data?.docs ?? [];
+        final docs = snap.data!.docs;
 
         return SingleChildScrollView(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
@@ -73,23 +85,25 @@ class ActivityHistoryScreen extends StatelessWidget {
               const SizedBox(height: 20),
 
               if (docs.isEmpty)
-                const Center(
-                  child: Padding(
-                    padding: EdgeInsets.only(top: 80),
+                const Padding(
+                  padding: EdgeInsets.only(top: 80),
+                  child: Center(
                     child: Text(
                       "No activity yet.",
-                      style: TextStyle(color: Colors.white54, fontSize: 14),
+                      style:
+                          TextStyle(color: Colors.white54, fontSize: 14),
                     ),
                   ),
                 ),
 
               ...docs.map((doc) {
                 final data = doc.data() as Map<String, dynamic>;
+
                 return _activityCard(
                   context,
                   docId: doc.id,
                   type: data["fallType"] ?? "Fall Detected",
-                  time: _formatTimestamp(data["timestamp"]),
+                  time: _formatTime(data["timestamp"]),
                   address: data["location"] ?? "Unknown location",
                   lat: (data["lat"] as num?)?.toDouble(),
                   lng: (data["lng"] as num?)?.toDouble(),
@@ -102,52 +116,30 @@ class ActivityHistoryScreen extends StatelessWidget {
     );
   }
 
-  // =======================================
-  // TIMESTAMP FIX → STRING or TIMESTAMP OK
-  // =======================================
-  String _formatTimestamp(dynamic value) {
-    DateTime? dt;
-
-    if (value is Timestamp) dt = value.toDate();
-    if (value is String) dt = DateTime.tryParse(value);
-
-    if (dt == null) return "Unknown time";
-
-    final y = dt.year.toString();
-    final m = dt.month.toString().padLeft(2, '0');
-    final d = dt.day.toString().padLeft(2, '0');
-    final hh = dt.hour.toString().padLeft(2, '0');
-    final mm = dt.minute.toString().padLeft(2, '0');
-
-    return "$y-$m-$d  $hh:$mm";
-  }
-
-  // =======================================
+  // =========================================================
   // HEADER
-  // =======================================
-  Widget _header(BuildContext context, bool hasDocs, String deviceId) {
+  // =========================================================
+  Widget _header(
+      BuildContext context, bool hasDocs, String deviceId) {
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
-        Row(
-          children: [
-            IconButton(
-              onPressed: () => Navigator.pop(context),
-              icon:
-                  const Icon(Icons.arrow_back, color: Colors.white70, size: 22),
+        Row(children: [
+          IconButton(
+            onPressed: () => Navigator.pop(context),
+            icon: const Icon(Icons.arrow_back, color: Colors.white70),
+          ),
+          const SizedBox(width: 6),
+          const Text(
+            "Activity &\nHistory",
+            style: TextStyle(
+              color: Colors.white,
+              fontSize: 26,
+              fontWeight: FontWeight.w700,
+              height: 1.1,
             ),
-            const SizedBox(width: 4),
-            const Text(
-              "Activity &\nHistory",
-              style: TextStyle(
-                color: Colors.white,
-                fontSize: 26,
-                fontWeight: FontWeight.w700,
-                height: 1.1,
-              ),
-            ),
-          ],
-        ),
+          ),
+        ]),
         if (hasDocs)
           GestureDetector(
             onTap: () => _clearAll(context, deviceId),
@@ -155,7 +147,7 @@ class ActivityHistoryScreen extends StatelessWidget {
               padding:
                   const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
               decoration: BoxDecoration(
-                border: Border.all(color: const Color(0xFF33B5FF)),
+                border: Border.all(color: Color(0xFF33B5FF)),
                 borderRadius: BorderRadius.circular(12),
               ),
               child: const Row(
@@ -166,11 +158,9 @@ class ActivityHistoryScreen extends StatelessWidget {
                   Text(
                     "Clear All",
                     style: TextStyle(
-                      color: Color(0xFF33B5FF),
-                      fontSize: 14,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  )
+                        color: Color(0xFF33B5FF),
+                        fontWeight: FontWeight.w600),
+                  ),
                 ],
               ),
             ),
@@ -179,9 +169,9 @@ class ActivityHistoryScreen extends StatelessWidget {
     );
   }
 
-  // =======================================
-  // ACTIVITY CARD
-  // =======================================
+  // =========================================================
+  // ACTIVITY CARD (NO CONTACTS SHOWN)
+  // =========================================================
   Widget _activityCard(
     BuildContext context, {
     required String docId,
@@ -201,150 +191,79 @@ class ActivityHistoryScreen extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Title Row
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Row(
-                children: [
-                  const Icon(Icons.warning_amber_rounded,
-                      color: Colors.redAccent, size: 22),
-                  const SizedBox(width: 10),
-                  Text(type,
-                      style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 16,
-                          fontWeight: FontWeight.w700)),
-                ],
-              ),
+              Row(children: [
+                const Icon(Icons.warning_amber_rounded,
+                    color: Colors.redAccent),
+                const SizedBox(width: 8),
+                Text(
+                  type,
+                  style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w700),
+                ),
+              ]),
               GestureDetector(
                 onTap: () => _deleteOne(context, docId),
                 child: const Icon(Icons.delete_outline,
-                    color: Colors.white54, size: 20),
+                    color: Colors.white54),
               ),
             ],
           ),
-
-          const SizedBox(height: 12),
-
-          Row(
-            children: [
-              const Icon(Icons.access_time,
-                  color: Colors.white54, size: 18),
-              const SizedBox(width: 6),
-              Text(time,
-                  style: const TextStyle(
-                      color: Colors.white70, fontSize: 13)),
-            ],
-          ),
-
-          const SizedBox(height: 12),
-
-          Row(
-            children: [
-              const Icon(Icons.location_on,
-                  color: Colors.white54, size: 18),
-              const SizedBox(width: 6),
-              Expanded(
-                child: Text(address,
-                    style: const TextStyle(
-                        color: Colors.white70, fontSize: 13)),
+          const SizedBox(height: 10),
+          Text(time,
+              style:
+                  const TextStyle(color: Colors.white54, fontSize: 13)),
+          const SizedBox(height: 8),
+          Text(address,
+              style:
+                  const TextStyle(color: Colors.white70, fontSize: 13)),
+          if (lat != null && lng != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 6),
+              child: Text(
+                "GPS: $lat, $lng",
+                style:
+                    const TextStyle(color: Colors.white38, fontSize: 12),
               ),
-            ],
-          ),
-
-          if (lat != null && lng != null) ...[
-            const SizedBox(height: 8),
-            Text("GPS: $lat, $lng",
-                style: const TextStyle(
-                    color: Colors.white38, fontSize: 12)),
-          ]
+            ),
         ],
       ),
     );
   }
 
-  // =======================================
-  // DELETE SINGLE
-  // =======================================
+  // =========================================================
+  // HELPERS
+  // =========================================================
+  String _formatTime(dynamic raw) {
+    DateTime? dt;
+    if (raw is Timestamp) dt = raw.toDate();
+    if (raw is String) dt = DateTime.tryParse(raw);
+    if (dt == null) return "Unknown";
+
+    return "${dt.year}-${dt.month.toString().padLeft(2, '0')}-"
+        "${dt.day.toString().padLeft(2, '0')} "
+        "${dt.hour.toString().padLeft(2, '0')}:"
+        "${dt.minute.toString().padLeft(2, '0')}";
+  }
+
   void _deleteOne(BuildContext context, String docId) {
-    showDialog(
-      context: context,
-      builder: (_) => AlertDialog(
-        backgroundColor: const Color(0xFF162233),
-        shape:
-            RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: const Text("Delete Activity?",
-            textAlign: TextAlign.center,
-            style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700)),
-        content: const Text(
-          "This will permanently delete this record.",
-          textAlign: TextAlign.center,
-          style: TextStyle(color: Colors.white70),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () {
-              FirebaseFirestore.instance
-                  .collection("alerts")
-                  .doc(docId)
-                  .delete();
-              Navigator.pop(context);
-            },
-            child: const Text("Delete",
-                style: TextStyle(color: Colors.redAccent)),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text("Cancel",
-                style: TextStyle(color: Colors.white70)),
-          ),
-        ],
-      ),
-    );
+    FirebaseFirestore.instance
+        .collection("alerts")
+        .doc(docId)
+        .delete();
   }
 
-  // =======================================
-  // CLEAR ALL
-  // =======================================
-  void _clearAll(BuildContext context, String deviceId) {
-    showDialog(
-      context: context,
-      builder: (_) => AlertDialog(
-        backgroundColor: const Color(0xFF162233),
-        shape:
-            RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: const Text("Clear All History?",
-            textAlign: TextAlign.center,
-            style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700)),
-        content: const Text(
-          "This will delete all activity for this device.",
-          textAlign: TextAlign.center,
-          style: TextStyle(color: Colors.white70),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () async {
-              final snap = await FirebaseFirestore.instance
-                  .collection("alerts")
-                  .where("deviceId", isEqualTo: deviceId)
-                  .get();
+  void _clearAll(BuildContext context, String deviceId) async {
+    final snap = await FirebaseFirestore.instance
+        .collection("alerts")
+        .where("deviceId", isEqualTo: deviceId)
+        .get();
 
-              for (final doc in snap.docs) {
-                doc.reference.delete();
-              }
-              Navigator.pop(context);
-            },
-            child: const Text("Delete All",
-                style: TextStyle(color: Colors.redAccent)),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text("Cancel",
-                style: TextStyle(color: Colors.white70)),
-          ),
-        ],
-      ),
-    );
+    for (final doc in snap.docs) {
+      doc.reference.delete();
+    }
   }
 }

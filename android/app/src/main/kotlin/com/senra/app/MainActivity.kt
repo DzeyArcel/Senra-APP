@@ -1,4 +1,4 @@
-package com.example.senra_app
+package com.senra.app
 
 import io.flutter.embedding.android.FlutterActivity
 

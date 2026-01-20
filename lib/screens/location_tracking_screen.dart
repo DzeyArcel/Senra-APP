@@ -4,6 +4,9 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import 'package:flutter_map/flutter_map.dart';
+import 'package:latlong2/latlong.dart';
+
 class LocationTrackingScreen extends StatefulWidget {
   const LocationTrackingScreen({super.key});
 
@@ -13,115 +16,139 @@ class LocationTrackingScreen extends StatefulWidget {
 
 class _LocationTrackingScreenState extends State<LocationTrackingScreen> {
   String? deviceId;
+  String caregiverId = "";
 
   double? lat;
   double? lng;
 
   String address = "Waiting for GPS…";
   String lastUpdate = "—";
-  String accuracy = "—";
 
   bool loading = true;
-  bool gpsLocked = false;
+  bool hasGps = false;
+  bool allowLocation = true;
 
   StreamSubscription? gpsSub;
+  StreamSubscription? privacySub;
 
   @override
   void initState() {
     super.initState();
-    _loadDevice();
+    _loadIds();
   }
 
   @override
   void dispose() {
     gpsSub?.cancel();
+    privacySub?.cancel();
     super.dispose();
   }
 
   // ==========================================================
-  // Load paired device
+  // LOAD IDS
   // ==========================================================
-  Future<void> _loadDevice() async {
+  Future<void> _loadIds() async {
     final prefs = await SharedPreferences.getInstance();
     deviceId = prefs.getString("pairedDevice");
+    caregiverId = prefs.getString("caregiverId") ?? "";
 
     if (deviceId == null || deviceId!.isEmpty) {
       setState(() => loading = false);
       return;
     }
 
-    _listenToDeviceDocument(deviceId!);
+    _listenToPrivacy();
+    _listenToDevice(deviceId!);
   }
 
   // ==========================================================
-  // Listen to Firestore device document
+  // PRIVACY (UI ONLY)
   // ==========================================================
-  void _listenToDeviceDocument(String deviceId) {
-    final ref =
-        FirebaseFirestore.instance.collection("devices").doc(deviceId);
+  void _listenToPrivacy() {
+    if (caregiverId.isEmpty) return;
 
-    gpsSub = ref.snapshots().listen((snap) {
-      if (!snap.exists || snap.data() == null) return;
+    privacySub = FirebaseFirestore.instance
+        .collection("caregivers")
+        .doc(caregiverId)
+        .snapshots()
+        .listen((doc) {
+      if (!doc.exists) return;
 
-      final data = snap.data()!;
-      _applyGpsData(data);
+      setState(() {
+        allowLocation = doc.data()?["locationSharing"] ?? true;
+      });
+    });
+  }
+
+  // ==========================================================
+  // DEVICE LISTENER
+  // ==========================================================
+  void _listenToDevice(String id) {
+    gpsSub = FirebaseFirestore.instance
+        .collection("devices")
+        .doc(id)
+        .snapshots()
+        .listen((snap) {
+      if (!snap.exists || snap.data() == null) {
+        setState(() {
+          hasGps = false;
+          lat = null;
+          lng = null;
+          address = "No GPS data available";
+        });
+        return;
+      }
+
+      _applyGpsData(snap.data()!);
     });
 
     setState(() => loading = false);
   }
 
   // ==========================================================
-  // Parse GPS Data
+  // APPLY GPS DATA
   // ==========================================================
   void _applyGpsData(Map<String, dynamic> data) {
-    final newLat = (data["lat"] as num?)?.toDouble();
-    final newLng = (data["lng"] as num?)?.toDouble();
+    final double? newLat = (data["lat"] as num?)?.toDouble();
+    final double? newLng = (data["lng"] as num?)?.toDouble();
 
-    // NO GPS FIX YET
     if (newLat == null || newLng == null) {
       setState(() {
-        gpsLocked = false;
-        address = "Searching for satellite signal…";
-        accuracy = "—";
+        hasGps = false;
+        address = "No GPS fix yet";
       });
       return;
     }
 
-    // GPS LOCKED!
-    final syncRaw = data["lastSync"];
     DateTime? ts;
-
-    if (syncRaw is Timestamp) ts = syncRaw.toDate();
-    if (syncRaw is String) ts = DateTime.tryParse(syncRaw);
+    final rawSync = data["lastSync"];
+    if (rawSync is Timestamp) ts = rawSync.toDate();
+    if (rawSync is String) ts = DateTime.tryParse(rawSync);
 
     setState(() {
-      gpsLocked = true;
       lat = newLat;
       lng = newLng;
-      address = "$newLat, $newLng";
+      hasGps = true;
+
+      address = allowLocation
+          ? "$newLat, $newLng"
+          : "Location sharing is disabled";
 
       lastUpdate = ts != null
-          ? "${ts.hour.toString().padLeft(2, '0')}:${ts.minute.toString().padLeft(2, '0')} — ${ts.month}/${ts.day}/${ts.year}"
+          ? "${ts.hour.toString().padLeft(2, '0')}:${ts.minute.toString().padLeft(2, '0')}  •  ${ts.month}/${ts.day}/${ts.year}"
           : "Unknown";
-
-      // HDOP (for accuracy)
-      final hdop = (data["hdop"] as num?)?.toDouble();
-      if (hdop != null) {
-        if (hdop <= 1.5) accuracy = "±3m";
-        else if (hdop <= 3.0) accuracy = "±5m";
-        else accuracy = "Low";
-      } else {
-        accuracy = "—";
-      }
     });
   }
 
   // ==========================================================
-  // Open maps
+  // OPEN FULL MAP (WEB)
   // ==========================================================
   void openOSM() {
-    if (lat == null || lng == null) return;
-    final url = "https://www.openstreetmap.org/?mlat=$lat&mlon=$lng#map=18/$lat/$lng";
+    if (!allowLocation || lat == null || lng == null) return;
+
+    final url =
+        "https://www.openstreetmap.org/?mlat=$lat&mlon=$lng#map=18/$lat/$lng";
+
     launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
   }
 
@@ -130,11 +157,6 @@ class _LocationTrackingScreenState extends State<LocationTrackingScreen> {
   // ==========================================================
   @override
   Widget build(BuildContext context) {
-    final mapPreview = (gpsLocked)
-        ? "https://staticmap.openstreetmap.de/staticmap.php"
-            "?center=$lat,$lng&zoom=16&size=600x300&markers=$lat,$lng,red"
-        : "";
-
     return Scaffold(
       backgroundColor: const Color(0xFF0E1625),
       body: SafeArea(
@@ -143,66 +165,124 @@ class _LocationTrackingScreenState extends State<LocationTrackingScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-
-              //----------------------------------------------------------
               // HEADER
-              //----------------------------------------------------------
               Row(
                 children: [
                   IconButton(
                     onPressed: () => Navigator.pop(context),
                     icon: const Icon(Icons.arrow_back,
-                        color: Colors.white70, size: 22),
+                        color: Colors.white70),
                   ),
                   const SizedBox(width: 6),
                   const Text(
                     "Location Tracking",
                     style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 24,
-                      fontWeight: FontWeight.w700,
-                    ),
+                        color: Colors.white,
+                        fontSize: 24,
+                        fontWeight: FontWeight.w700),
                   ),
                 ],
               ),
-              const SizedBox(height: 6),
-              Text(
-                gpsLocked ? "Real-time GPS Monitoring" : "Waiting for GPS Fix…",
-                style: const TextStyle(color: Colors.white70, fontSize: 14),
+              const SizedBox(height: 4),
+              const Text(
+                "Event-Based Monitoring",
+                style: TextStyle(color: Colors.white70),
               ),
               const SizedBox(height: 22),
 
-              //----------------------------------------------------------
-              // MAP PREVIEW
-              //----------------------------------------------------------
+              // ================= MAP PREVIEW =================
               GestureDetector(
-                onTap: gpsLocked ? openOSM : null,
+                onTap: (hasGps && allowLocation) ? openOSM : null,
                 child: Container(
-                  height: 300,
-                  width: double.infinity,
+                  height: 280,
                   decoration: BoxDecoration(
                     color: const Color(0xFF162233),
                     borderRadius: BorderRadius.circular(14),
                   ),
                   child: ClipRRect(
                     borderRadius: BorderRadius.circular(14),
-                    child: gpsLocked
-                        ? Image.network(mapPreview, fit: BoxFit.cover)
-                        : const Center(
-                            child: Text(
-                              "Searching for GPS…",
-                              style: TextStyle(color: Colors.white54),
+                    child: Stack(
+                      children: [
+                        Positioned.fill(
+                          child: !allowLocation
+                              ? _privacyOverlay()
+                              : (!hasGps || lat == null || lng == null)
+                                  ? const Center(
+                                      child: Text(
+                                        "No location available",
+                                        style:
+                                            TextStyle(color: Colors.white54),
+                                      ),
+                                    )
+                                  : FlutterMap(
+                                      options: MapOptions(
+                                        initialCenter: LatLng(lat!, lng!),
+                                        initialZoom: 16,
+                                        interactionOptions:
+                                            const InteractionOptions(
+                                          flags: InteractiveFlag.none,
+                                        ),
+                                      ),
+                                      children: [
+                                        TileLayer(
+                                          urlTemplate:
+                                              "https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+                                          userAgentPackageName:
+                                              "com.example.senra_app",
+                                        ),
+                                        MarkerLayer(
+                                          markers: [
+                                            Marker(
+                                              point: LatLng(lat!, lng!),
+                                              width: 40,
+                                              height: 40,
+                                              child: const Icon(
+                                                Icons.location_on,
+                                                size: 40,
+                                                color: Color(0xFF33B5FF),
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ],
+                                    ),
+                        ),
+
+                        // TAP TO OPEN MAP
+                        if (hasGps && allowLocation)
+                          Positioned(
+                            right: 10,
+                            bottom: 10,
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 10, vertical: 6),
+                              decoration: BoxDecoration(
+                                color: Colors.black.withOpacity(0.55),
+                                borderRadius: BorderRadius.circular(20),
+                              ),
+                              child: const Row(
+                                children: [
+                                  Icon(Icons.open_in_new,
+                                      size: 14, color: Colors.white),
+                                  SizedBox(width: 6),
+                                  Text(
+                                    "Open in map",
+                                    style: TextStyle(
+                                        color: Colors.white, fontSize: 12),
+                                  ),
+                                ],
+                              ),
                             ),
                           ),
+                      ],
+                    ),
                   ),
                 ),
               ),
 
               const SizedBox(height: 26),
 
-              //----------------------------------------------------------
-              // DETAILS CARD
-              //----------------------------------------------------------
+              // ================= DETAILS =================
               Container(
                 padding: const EdgeInsets.all(18),
                 decoration: BoxDecoration(
@@ -212,72 +292,93 @@ class _LocationTrackingScreenState extends State<LocationTrackingScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Row(
-                      children: const [
+                    const Row(
+                      children: [
                         Icon(Icons.location_on_rounded,
-                            color: Color(0xFF33B5FF), size: 22),
+                            color: Color(0xFF33B5FF)),
                         SizedBox(width: 10),
-                        Text(
-                          "Current Location",
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontSize: 16,
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
+                        Text("Current Location",
+                            style: TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.w700)),
                       ],
                     ),
-
                     const SizedBox(height: 16),
-
-                    Row(
-                      children: [
-                        const Icon(Icons.place_rounded,
-                            color: Colors.white70, size: 18),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: Text(
-                            address,
-                            style: const TextStyle(
-                                color: Colors.white, fontSize: 14),
-                          ),
-                        ),
-                      ],
-                    ),
-
-                    const SizedBox(height: 20),
-
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        _infoBlock("Last Update", lastUpdate),
-                        _infoBlock("Accuracy", accuracy),
-                      ],
-                    ),
+                    _infoRow(Icons.place_rounded, address),
+                    const SizedBox(height: 18),
+                    _infoBlock("Last Update", lastUpdate),
                   ],
                 ),
               ),
 
               const SizedBox(height: 22),
 
+              // ================= HOW IT WORKS =================
               Container(
-                padding: const EdgeInsets.all(16),
+                padding: const EdgeInsets.all(18),
                 decoration: BoxDecoration(
                   color: const Color(0xFF162233),
                   borderRadius: BorderRadius.circular(14),
                 ),
-                child: const Text(
-                  "GPS coordinates appear only after your Senra device gets a valid satellite fix.",
-                  textAlign: TextAlign.center,
-                  style: TextStyle(color: Colors.white70, fontSize: 13),
+                child: const Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      "How location works",
+                      style: TextStyle(
+                        color: Color(0xFF33B5FF),
+                        fontWeight: FontWeight.w600,
+                        fontSize: 16,
+                      ),
+                    ),
+                    SizedBox(height: 12),
+              
+                        _Bullet("• GPS accuracy improves with a clear sky view"),
+                        _Bullet("• Location is provided by the Senra wearable’s built-in GPS"),
+                        _Bullet("• GPS may take a few minutes to lock after the device powers on"),
+                        _Bullet("• Check this screen again once the device finishes syncing"),
+                        _Bullet("• Accuracy improves when the device has a clear view of the sky"),
+
+                  ],
                 ),
               ),
-
-              const SizedBox(height: 40),
             ],
           ),
         ),
       ),
+    );
+  }
+
+  // ==========================================================
+  // HELPERS
+  // ==========================================================
+  Widget _privacyOverlay() {
+    return const Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(Icons.lock_outline, color: Colors.white70, size: 36),
+          SizedBox(height: 10),
+          Text("Location sharing is disabled",
+              style: TextStyle(color: Colors.white)),
+          SizedBox(height: 6),
+          Text("Enable it in Settings to view location",
+              style: TextStyle(color: Colors.white54)),
+        ],
+      ),
+    );
+  }
+
+  Widget _infoRow(IconData icon, String text) {
+    return Row(
+      children: [
+        Icon(icon, color: Colors.white70, size: 18),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Text(text,
+              style: const TextStyle(color: Colors.white)),
+        ),
+      ],
     );
   }
 
@@ -291,9 +392,22 @@ class _LocationTrackingScreenState extends State<LocationTrackingScreen> {
         Text(value,
             style: const TextStyle(
                 color: Colors.white,
-                fontWeight: FontWeight.w600,
-                fontSize: 14)),
+                fontWeight: FontWeight.w600)),
       ],
     );
+  }
+}
+
+// ==========================================================
+// BULLET
+// ==========================================================
+class _Bullet extends StatelessWidget {
+  final String text;
+  const _Bullet(this.text);
+
+  @override
+  Widget build(BuildContext context) {
+    return Text(text,
+        style: const TextStyle(color: Colors.white70, fontSize: 13));
   }
 }

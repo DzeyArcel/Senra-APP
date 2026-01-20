@@ -1,6 +1,15 @@
+// ============================================================
+// ManageDeviceScreen.dart — FINAL ECOSYSTEM VERSION
+// - Auth-safe (FirebaseAuth UID)
+// - Unlink device safe
+// - Change Wi-Fi password (reset_wifi)
+// - StartupRouter aligned
+// ============================================================
+
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 
 class ManageDeviceScreen extends StatefulWidget {
   const ManageDeviceScreen({super.key});
@@ -12,6 +21,9 @@ class ManageDeviceScreen extends StatefulWidget {
 class _ManageDeviceScreenState extends State<ManageDeviceScreen> {
   String? deviceId;
 
+  // ==========================================================
+  // INIT
+  // ==========================================================
   @override
   void initState() {
     super.initState();
@@ -19,7 +31,7 @@ class _ManageDeviceScreenState extends State<ManageDeviceScreen> {
   }
 
   // ==========================================================
-  // Load paired device ID
+  // LOAD PAIRED DEVICE (LOCAL CACHE)
   // ==========================================================
   Future<void> _loadPairedDevice() async {
     final prefs = await SharedPreferences.getInstance();
@@ -31,62 +43,108 @@ class _ManageDeviceScreenState extends State<ManageDeviceScreen> {
   }
 
   // ==========================================================
-  // Unlink device
+  // 🔌 UNLINK DEVICE — AUTH + ECOSYSTEM SAFE
   // ==========================================================
   Future<void> _unlinkDevice() async {
     if (deviceId == null) return;
 
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return;
+
     final prefs = await SharedPreferences.getInstance();
-    final caregiverId = prefs.getString("caregiverId");
 
-    if (caregiverId == null) return;
+    try {
+      // 1️⃣ Clear caregiver link
+      await FirebaseFirestore.instance
+          .collection("caregivers")
+          .doc(user.uid)
+          .update({
+        "pairedDevice": "",
+      });
 
-    // Remove paired device from caregiver
-    await FirebaseFirestore.instance
-        .collection("caregivers")
-        .doc(caregiverId)
-        .update({"pairedDevice": ""});
+      // 2️⃣ Clear device link
+      await FirebaseFirestore.instance
+          .collection("devices")
+          .doc(deviceId)
+          .update({
+        "paired_to": "",
+      });
 
-    // Remove paired_to from device
-    await FirebaseFirestore.instance
-        .collection("devices")
-        .doc(deviceId)
-        .update({"paired_to": ""});
+      // 3️⃣ Clear local state
+      await prefs.remove("pairedDevice");
+      await prefs.setBool("needsWifiSetup", true);
 
-    await prefs.setString("pairedDevice", "");
+      if (!mounted) return;
 
-    if (!mounted) return;
+      Navigator.pushNamedAndRemoveUntil(
+        context,
+        "/device-pairing",
+        (_) => false,
+      );
+    } catch (e) {
+      if (!mounted) return;
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text("Device has been unlinked."),
-        backgroundColor: Colors.redAccent,
-      ),
-    );
-
-    Navigator.pushNamedAndRemoveUntil(
-      context,
-      "/device-pairing",
-      (route) => false,
-    );
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text("Failed to unlink device: $e"),
+          backgroundColor: Colors.redAccent,
+        ),
+      );
+    }
   }
 
   // ==========================================================
-  // Change WiFi
+  // 📶 CHANGE WI-FI PASSWORD (RESET FLOW)
   // ==========================================================
   Future<void> _changeWifi() async {
     if (deviceId == null) return;
 
-    await FirebaseFirestore.instance
-        .collection("devices")
-        .doc(deviceId)
-        .update({"adminCommand": "reset_wifi"});
+    final prefs = await SharedPreferences.getInstance();
 
-    Navigator.pushNamed(context, "/wifi-config");
+    // Force Wi-Fi setup route
+    await prefs.setBool("needsWifiSetup", true);
+
+    // Loading overlay
+    if (mounted) {
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (_) => const Center(
+          child: CircularProgressIndicator(color: Colors.white),
+        ),
+      );
+    }
+
+    try {
+      // 🔥 ONLY FIELD FIRMWARE LISTENS TO
+      await FirebaseFirestore.instance
+          .collection("devices")
+          .doc(deviceId)
+          .update({
+        "adminCommand": "reset_wifi",
+      });
+
+      await Future.delayed(const Duration(milliseconds: 500));
+
+      if (!mounted) return;
+      Navigator.pop(context);
+
+      Navigator.pushNamed(context, "/wifi-config");
+    } catch (e) {
+      if (!mounted) return;
+      Navigator.pop(context);
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text("Failed to reset Wi-Fi: $e"),
+          backgroundColor: Colors.redAccent,
+        ),
+      );
+    }
   }
 
   // ==========================================================
-  // Format time
+  // TIME FORMATTER
   // ==========================================================
   String _timeAgo(dynamic value) {
     if (value == null) return "—";
@@ -103,6 +161,9 @@ class _ManageDeviceScreenState extends State<ManageDeviceScreen> {
     return "$minutes min ago";
   }
 
+  // ==========================================================
+  // UI
+  // ==========================================================
   @override
   Widget build(BuildContext context) {
     if (deviceId == null) {
@@ -134,15 +195,11 @@ class _ManageDeviceScreenState extends State<ManageDeviceScreen> {
           final raw =
               snapshot.data!.data() as Map<String, dynamic>? ?? {};
 
-          // Safe field reads
           final name = raw["device_name"] ?? "Senra Wearable";
           final firmware = raw["firmware"] ?? "v1.0.0";
-          final battery =
-              raw["batteryLevel"] ?? raw["battery"] ?? 0;
-          final signal = raw["signal"]?.toString() ?? "—";
+          final battery = raw["batteryLevel"] ?? 0;
           final lastSyncText = _timeAgo(raw["lastSync"]);
 
-          // Online rule
           bool online = false;
           if (raw["lastSync"] != null) {
             DateTime? dt;
@@ -152,22 +209,16 @@ class _ManageDeviceScreenState extends State<ManageDeviceScreen> {
               dt = DateTime.tryParse(raw["lastSync"]);
             }
             if (dt != null) {
-              online = DateTime.now().difference(dt).inSeconds < 20;
+              online = DateTime.now().difference(dt).inSeconds < 30;
             }
           }
 
           return SafeArea(
             child: SingleChildScrollView(
-              padding: const EdgeInsets.symmetric(
-                horizontal: 18,
-                vertical: 14,
-              ),
+              padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // ======================================================
-                  // HEADER
-                  // ======================================================
                   Row(
                     children: [
                       IconButton(
@@ -188,9 +239,6 @@ class _ManageDeviceScreenState extends State<ManageDeviceScreen> {
 
                   const SizedBox(height: 20),
 
-                  // ======================================================
-                  // DEVICE INFO CARD
-                  // ======================================================
                   _card(
                     title: "Device Information",
                     icon: Icons.watch_outlined,
@@ -204,9 +252,6 @@ class _ManageDeviceScreenState extends State<ManageDeviceScreen> {
 
                   const SizedBox(height: 22),
 
-                  // ======================================================
-                  // CONNECTION STATUS CARD
-                  // ======================================================
                   _card(
                     title: "Connection Status",
                     icon: Icons.wifi,
@@ -237,20 +282,16 @@ class _ManageDeviceScreenState extends State<ManageDeviceScreen> {
                             ),
                           ),
                         ],
-                      )
+                      ),
                     ],
                   ),
 
                   const SizedBox(height: 22),
 
-                  // ======================================================
-                  // TECH DETAILS
-                  // ======================================================
                   _card(
                     title: "Device Status",
                     icon: Icons.memory_rounded,
                     children: [
-                      _rowInfo("Signal Strength", signal),
                       _rowInfo("Firmware Version", firmware),
                     ],
                   ),
@@ -266,9 +307,8 @@ class _ManageDeviceScreenState extends State<ManageDeviceScreen> {
   }
 
   // ==========================================================
-  // Reusable UI widgets
+  // UI HELPERS
   // ==========================================================
-
   Widget _card({
     required String title,
     required IconData icon,
@@ -306,17 +346,17 @@ class _ManageDeviceScreenState extends State<ManageDeviceScreen> {
     );
   }
 
-  Widget _rowInfo(String label, String value, {Color valueColor = Colors.white}) {
+  Widget _rowInfo(String label, String value,
+      {Color valueColor = Colors.white}) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          Text(label,
-              style: const TextStyle(
-                color: Colors.white54,
-                fontSize: 13,
-              )),
+          Text(
+            label,
+            style: const TextStyle(color: Colors.white54, fontSize: 13),
+          ),
           Text(
             value,
             style: TextStyle(

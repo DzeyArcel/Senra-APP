@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_auth/firebase_auth.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class EditAccountInfoScreen extends StatefulWidget {
   const EditAccountInfoScreen({super.key});
@@ -14,6 +14,7 @@ class _EditAccountInfoScreenState extends State<EditAccountInfoScreen> {
   final TextEditingController phoneController = TextEditingController();
 
   bool loading = true;
+  String? caregiverId;
 
   @override
   void initState() {
@@ -21,75 +22,139 @@ class _EditAccountInfoScreenState extends State<EditAccountInfoScreen> {
     _loadCaregiverInfo();
   }
 
-  // --------------------------------------------------------
-  // 🔥 LOAD CAREGIVER INFO FROM FIRESTORE
-  // --------------------------------------------------------
+  // ============================================================
+  // LOAD CAREGIVER INFO
+  // ============================================================
   Future<void> _loadCaregiverInfo() async {
-    final uid = FirebaseAuth.instance.currentUser?.uid;
+    final prefs = await SharedPreferences.getInstance();
+    caregiverId = prefs.getString("caregiverId");
 
-    if (uid == null) {
+    if (caregiverId == null) {
       setState(() => loading = false);
       return;
     }
 
     final doc = await FirebaseFirestore.instance
         .collection("caregivers")
-        .doc(uid)
+        .doc(caregiverId)
         .get();
 
     if (doc.exists) {
-      final data = doc.data()!;
-      nameController.text = data["name"] ?? "";
-      phoneController.text = data["phone"] ?? "";
+      nameController.text = doc.data()?["name"] ?? "";
+      phoneController.text = doc.data()?["phone"] ?? ""; // should already be 09...
     }
 
     setState(() => loading = false);
   }
 
-  // --------------------------------------------------------
-  // 🔥 SAVE UPDATED ACCOUNT INFO
-  // --------------------------------------------------------
-  Future<void> _saveChanges() async {
-    final uid = FirebaseAuth.instance.currentUser?.uid;
-    if (uid == null) return;
+  // ============================================================
+  // NORMALIZE PH PHONE NUMBER → ALWAYS RETURNS 09XXXXXXXXX
+  // ============================================================
+  String? normalizePH(String input) {
+    input = input.replaceAll(" ", "");
 
+    final plus63 = RegExp(r'^\+639\d{9}$');
+    final zero9 = RegExp(r'^09\d{9}$');
+    final nine = RegExp(r'^9\d{9}$');
+    final sixThree = RegExp(r'^639\d{9}$');
+
+    if (zero9.hasMatch(input)) return input; // Already 09
+
+    if (plus63.hasMatch(input)) {
+      return "0${input.substring(3)}"; // +639XXXXXXXXX → 09XXXXXXXXX
+    }
+
+    if (sixThree.hasMatch(input)) {
+      return "0${input.substring(2)}"; // 639XXXXXXXXX → 09XXXXXXXXX
+    }
+
+    if (nine.hasMatch(input)) {
+      return "0$input"; // 9XXXXXXXXX → 09XXXXXXXXX
+    }
+
+    return null; // invalid
+  }
+
+  // ============================================================
+  // SAVE CHANGES
+  // ============================================================
+  Future<void> _saveChanges() async {
+    if (caregiverId == null) return;
+
+    final name = nameController.text.trim();
+    final phoneRaw = phoneController.text.trim();
+
+    // Case: nothing entered
+    if (name.isEmpty && phoneRaw.isEmpty) {
+      _showMessage("Enter at least one field to update.");
+      return;
+    }
+
+    // Validate phone only IF user typed something
+    String? normalizedPhone;
+    if (phoneRaw.isNotEmpty) {
+      normalizedPhone = normalizePH(phoneRaw);
+      if (normalizedPhone == null) {
+        _showMessage("Invalid phone number. Use PH format (09XXXXXXXXX).");
+        return;
+      }
+    }
+
+    final updateData = <String, dynamic>{};
+
+    if (name.isNotEmpty) updateData["name"] = name;
+    if (normalizedPhone != null) updateData["phone"] = normalizedPhone;
+
+    updateData["updated_at"] = FieldValue.serverTimestamp();
+
+    // Save to Firestore
     await FirebaseFirestore.instance
         .collection("caregivers")
-        .doc(uid)
-        .update({
-      "name": nameController.text.trim(),
-      "phone": phoneController.text.trim(),
-      "updated_at": FieldValue.serverTimestamp(),
-    });
+        .doc(caregiverId)
+        .update(updateData);
 
+    // Update local session
+    final prefs = await SharedPreferences.getInstance();
+    if (name.isNotEmpty) prefs.setString("caregiverName", name);
+    if (normalizedPhone != null) prefs.setString("caregiverPhone", normalizedPhone);
+
+    _showMessage("Account updated!");
     Navigator.pop(context);
   }
 
+  // ============================================================
+  // MESSAGE SNACKBAR
+  // ============================================================
+  void _showMessage(String msg) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(msg),
+        backgroundColor: const Color(0xFF33B5FF),
+      ),
+    );
+  }
+
+  // ============================================================
+  // UI
+  // ============================================================
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: const Color(0xFF0E1625),
-
       body: loading
-          ? const Center(
-              child: CircularProgressIndicator(color: Color(0xFF33B5FF)),
-            )
+          ? const Center(child: CircularProgressIndicator(color: Color(0xFF33B5FF)))
           : SafeArea(
               child: SingleChildScrollView(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    // -----------------------------------------
-                    // BACK BUTTON + TITLE
-                    // -----------------------------------------
+                    // HEADER
                     Row(
                       children: [
                         IconButton(
                           onPressed: () => Navigator.pop(context),
-                          icon: const Icon(Icons.arrow_back,
-                              color: Colors.white70),
+                          icon: const Icon(Icons.arrow_back, color: Colors.white70),
                         ),
                         const SizedBox(width: 6),
                         const Text(
@@ -103,23 +168,10 @@ class _EditAccountInfoScreenState extends State<EditAccountInfoScreen> {
                       ],
                     ),
 
-                    const SizedBox(height: 4),
-                    const Padding(
-                      padding: EdgeInsets.only(left: 10),
-                      child: Text(
-                        "Update your caregiver details",
-                        style: TextStyle(
-                          color: Colors.white70,
-                          fontSize: 14,
-                        ),
-                      ),
-                    ),
-
                     const SizedBox(height: 30),
 
-                    // ================== MAIN CARD ==================
+                    // MAIN CARD
                     Container(
-                      width: double.infinity,
                       padding: const EdgeInsets.all(18),
                       decoration: BoxDecoration(
                         color: const Color(0xFF162233),
@@ -128,90 +180,34 @@ class _EditAccountInfoScreenState extends State<EditAccountInfoScreen> {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Row(
-                            children: const [
-                              Icon(Icons.person_outline,
-                                  color: Color(0xFF33B5FF), size: 24),
-                              SizedBox(width: 10),
-                              Text(
-                                "Caregiver Details",
-                                style: TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 16,
-                                  fontWeight: FontWeight.w700,
-                                ),
-                              ),
-                            ],
-                          ),
-
+                          const Text("Name",
+                              style: TextStyle(color: Colors.white, fontSize: 14)),
                           const SizedBox(height: 6),
-                          const Padding(
-                            padding: EdgeInsets.only(left: 2),
-                            child: Text(
-                              "Update your name and phone number",
-                              style: TextStyle(
-                                color: Colors.white54,
-                                fontSize: 13,
-                              ),
-                            ),
-                          ),
-
-                          const SizedBox(height: 22),
-
-                          // NAME LABEL
-                          const Text(
-                            "Name",
-                            style: TextStyle(
-                              color: Colors.white,
-                              fontSize: 14,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                          const SizedBox(height: 6),
-
-                          // NAME FIELD
                           _inputField(controller: nameController),
 
                           const SizedBox(height: 20),
 
-                          // PHONE LABEL
-                          const Text(
-                            "Phone Number",
-                            style: TextStyle(
-                              color: Colors.white,
-                              fontSize: 14,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
+                          const Text("Phone Number (PH format: 09XXXXXXXXX)",
+                              style: TextStyle(color: Colors.white, fontSize: 14)),
                           const SizedBox(height: 6),
-
-                          // PHONE FIELD
                           _inputField(controller: phoneController),
 
                           const SizedBox(height: 26),
 
-                          // ================== BUTTONS ROW ==================
                           Row(
                             children: [
-                              // CANCEL BUTTON
                               Expanded(
                                 child: GestureDetector(
                                   onTap: () => Navigator.pop(context),
                                   child: Container(
-                                    padding: const EdgeInsets.symmetric(
-                                        vertical: 14),
+                                    padding: const EdgeInsets.symmetric(vertical: 14),
                                     decoration: BoxDecoration(
                                       color: const Color(0xFF223247),
                                       borderRadius: BorderRadius.circular(10),
                                     ),
                                     child: const Center(
-                                      child: Text(
-                                        "Cancel",
-                                        style: TextStyle(
-                                          color: Colors.white70,
-                                          fontWeight: FontWeight.w600,
-                                        ),
-                                      ),
+                                      child: Text("Cancel",
+                                          style: TextStyle(color: Colors.white70)),
                                     ),
                                   ),
                                 ),
@@ -219,13 +215,11 @@ class _EditAccountInfoScreenState extends State<EditAccountInfoScreen> {
 
                               const SizedBox(width: 14),
 
-                              // SAVE CHANGES BUTTON
                               Expanded(
                                 child: GestureDetector(
                                   onTap: _saveChanges,
                                   child: Container(
-                                    padding: const EdgeInsets.symmetric(
-                                        vertical: 14),
+                                    padding: const EdgeInsets.symmetric(vertical: 14),
                                     decoration: BoxDecoration(
                                       color: const Color(0xFF33B5FF),
                                       borderRadius: BorderRadius.circular(10),
@@ -234,9 +228,8 @@ class _EditAccountInfoScreenState extends State<EditAccountInfoScreen> {
                                       child: Text(
                                         "Save Changes",
                                         style: TextStyle(
-                                          color: Colors.black87,
-                                          fontWeight: FontWeight.w600,
-                                        ),
+                                            color: Colors.black87,
+                                            fontWeight: FontWeight.w700),
                                       ),
                                     ),
                                   ),
@@ -256,9 +249,7 @@ class _EditAccountInfoScreenState extends State<EditAccountInfoScreen> {
     );
   }
 
-  // ---------------------------------------------------------
-  // REUSABLE INPUT FIELD
-  // ---------------------------------------------------------
+  // INPUT FIELD
   Widget _inputField({required TextEditingController controller}) {
     return Container(
       decoration: BoxDecoration(

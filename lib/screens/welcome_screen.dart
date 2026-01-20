@@ -1,7 +1,16 @@
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class WelcomeScreen extends StatelessWidget {
   const WelcomeScreen({super.key});
+
+  Future<void> _completeWelcome(BuildContext context) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool("seen_welcome", true);
+
+    // 🔥 ALWAYS return control to StartupRouter
+    Navigator.pushReplacementNamed(context, "/startup");
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -38,9 +47,7 @@ class WelcomeScreen extends StatelessWidget {
                   ],
                 ),
               ),
-
               const SizedBox(height: 10),
-
               const Text(
                 "Your Safety, Always With You.",
                 style: TextStyle(
@@ -48,17 +55,11 @@ class WelcomeScreen extends StatelessWidget {
                   color: Colors.white70,
                 ),
               ),
-
               const SizedBox(height: 60),
-
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 24),
                 child: GestureDetector(
-                  onTap: () {
-                    // ⬅ FIXED: No more looping!
-                    Navigator.pushReplacementNamed(
-                        context, "/caregiver-info");
-                  },
+                  onTap: () => _completeWelcome(context),
                   child: Container(
                     width: double.infinity,
                     padding: const EdgeInsets.symmetric(vertical: 14),

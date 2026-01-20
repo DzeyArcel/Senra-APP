@@ -1,7 +1,16 @@
+// ***************************************************************
+// SENRA APP — DASHBOARD (OPTIMIZED 2025 FINAL VERSION)
+// Fully compatible with StartupRouter, AlertScreen, FW V14.7
+// ***************************************************************
+
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import '../services/notification_initializer.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+
 
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({super.key});
@@ -11,263 +20,300 @@ class DashboardScreen extends StatefulWidget {
 }
 
 class _DashboardScreenState extends State<DashboardScreen> {
-  StreamSubscription<DocumentSnapshot>? _deviceListener;
-  bool _fallScreenOpened = false;
+
+  String? deviceId;
+  String caregiverId = "";
+  String cleanDeviceId = "";
+
+  // 🔐 Privacy flags synced from caregiver settings
+  bool allowLocation = true;
+  bool allowVibration = true;
+
+  StreamSubscription? alertListener;
+  StreamSubscription? privacyListener;
+  bool alertOpened = false; // IMPORTANT: never reset inside build()
 
   @override
   void initState() {
     super.initState();
-
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _startDeviceFallListener();
-    });
+    _loadIds();
   }
 
-  @override
-  void dispose() {
-    _deviceListener?.cancel();
-    super.dispose();
-  }
-
-  // ===============================================================
-  // 🔥 REALTIME FALL + ONLINE / OFFLINE LISTENER
-  // ===============================================================
-  Future<void> _startDeviceFallListener() async {
+  // ---------------------------------------------------------------
+  // LOAD CAREGIVER + DEVICE ID
+  // ---------------------------------------------------------------
+  Future<void> _loadIds() async {
     final prefs = await SharedPreferences.getInstance();
-    final deviceId = prefs.getString("pairedDevice");
 
-    if (deviceId == null || deviceId.isEmpty) return;
+    final user = FirebaseAuth.instance.currentUser;
 
-    _deviceListener = FirebaseFirestore.instance
-        .collection("devices")
-        .doc(deviceId)
+if (user == null) {
+  Navigator.pushReplacementNamed(context, "/welcome");
+  return;
+}
+
+caregiverId = user.uid;
+
+    deviceId = prefs.getString("pairedDevice") ?? "";
+
+    if (deviceId == null || deviceId!.isEmpty) {
+      Navigator.pushReplacementNamed(context, "/device-pairing");
+      return;
+    }
+
+    cleanDeviceId = deviceId!.replaceAll('"', "").trim();
+
+    // ✅ INIT NOTIFICATIONS (safe: only runs once globally)
+    if (caregiverId.isNotEmpty) {
+      await NotificationInitializer.init(caregiverId: caregiverId);
+    }
+
+    // 🔁 Start syncing privacy preferences
+    _syncPrivacySettings();
+
+    // WAIT 350ms BEFORE STARTING LISTENER
+ Future.delayed(const Duration(milliseconds: 350), () {
+  if (!mounted) return;
+  _listenToAlerts();
+});
+
+   if (mounted) {
+  setState(() {});
+}
+
+  }
+
+  // ---------------------------------------------------------------
+  // 🔐 SYNC PRIVACY SETTINGS FROM CAREGIVER DOC
+  // ---------------------------------------------------------------
+  void _syncPrivacySettings() {
+  if (caregiverId.isEmpty) return;
+
+  privacyListener?.cancel();
+
+  privacyListener = FirebaseFirestore.instance
+      .collection("caregivers")
+      .doc(caregiverId)
+      .snapshots()
+      .listen((doc) {
+    if (!mounted || !doc.exists) return;
+
+    final data = doc.data()!;
+
+    if (!mounted) return;
+
+    setState(() {
+      allowLocation = data["locationSharing"] ?? true;
+      allowVibration = data["emergencyVibration"] ?? true;
+    });
+  });
+}
+
+
+  // ---------------------------------------------------------------
+  // REALTIME ALERT LISTENER — HANDLES MULTIPLE ALERTS SAFELY
+  // ---------------------------------------------------------------
+  void _listenToAlerts() {
+    alertListener = FirebaseFirestore.instance
+        .collection("alerts")
+        .where("deviceId", isEqualTo: cleanDeviceId) // FILTER FIRST
+        .orderBy("timestamp", descending: true) // THEN ORDER
+        .limit(1)
         .snapshots()
         .listen((snap) async {
-      if (!snap.exists) return;
 
-      final data = snap.data() as Map<String, dynamic>;
+      if (snap.docs.isEmpty) return;
 
-      // ------------------------
-      // 1️⃣ ONLINE LOGIC (20s rule)
-      // ------------------------
-      final rawSync = data["lastSync"];
-      DateTime? lastSync;
-      if (rawSync is Timestamp) lastSync = rawSync.toDate();
-      if (rawSync is String) lastSync = DateTime.tryParse(rawSync);
+      final doc = snap.docs.first;
+      final data = doc.data();
 
-      bool isOnline = false;
-      if (lastSync != null) {
-        isOnline = DateTime.now().difference(lastSync).inSeconds <= 20;
-      }
+      if (data["delivered"] == true) return;
+      if (data["status"] == "handled") return;
+      if (data["status"] == "cancelled_by_device") return;
 
-      // If offline → redirect to device-connected screen
-      if (!isOnline && mounted && !_fallScreenOpened) {
-        Navigator.pushReplacementNamed(context, "/device-connected");
-        return;
-      }
+      if (alertOpened) return;
+      alertOpened = true;
 
-      // ------------------------
-      // 2️⃣ FALL DETECTION
-      // ------------------------
-      bool fallDetected = false;
-      final rawFall = data["fallDetected"];
-      if (rawFall is bool) fallDetected = rawFall;
-      if (rawFall is Map && rawFall["booleanValue"] is bool) {
-        fallDetected = rawFall["booleanValue"];
-      }
+      try {
+        // Load caregiver contacts
+        final cgSnap = await FirebaseFirestore.instance
+            .collection("caregivers")
+            .doc(caregiverId)
+            .get();
 
-      if (!fallDetected || _fallScreenOpened) return;
+        List<Map<String, String>> contacts = [];
+        if (cgSnap.exists) {
+          final rawList = (cgSnap.data()?["contacts"] ?? []) as List<dynamic>;
+          contacts = rawList.map((e) => Map<String, String>.from(e)).toList();
+        }
 
-      _fallScreenOpened = true;
+        // 🧭 Respect Location Sharing
+        final String safeLocation = allowLocation
+            ? (data["location"] ?? "Unknown")
+            : "Location hidden by privacy settings";
 
-      // ------------------------
-      // LOCATION
-      // ------------------------
-      final lat = data["lat"];
-      final lng = data["lng"];
-      final readableLocation =
-          (lat != null && lng != null) ? "Lat: $lat, Lng: $lng" : "Unknown location";
+        final double safeLat = allowLocation ? (data["lat"] ?? 0.0).toDouble() : 0.0;
+        final double safeLng = allowLocation ? (data["lng"] ?? 0.0).toDouble() : 0.0;
+        final String safeMap = allowLocation ? (data["mapURL"] ?? "") : "";
 
-      // ------------------------
-      // Extract contacts (if firmware sends them)
-      // ------------------------
-      List<Map<String, String>> contacts = [];
-      if (data["contacts"] is List) {
-        contacts = (data["contacts"] as List)
-            .map((x) => Map<String, String>.from(x))
-            .toList();
-      }
+        // 📳 Respect Vibration preference
+        if (allowVibration) {
+          HapticFeedback.heavyImpact();
+        }
 
-      // ------------------------
-      // Go to Alert Screen
-      // ------------------------
-      Navigator.pushNamed(
-        context,
-        "/alert",
-        arguments: {
-          "deviceId": deviceId,
-          "location": readableLocation,
-          "lat": lat,
-          "lng": lng,
-          "mapURL": "https://www.google.com/maps?q=$lat,$lng",
-          "contacts": contacts,
-          "fallType": "Fall Detected",
-        },
-      ).then((_) async {
-        _fallScreenOpened = false;
-
-        // Reset fallDetected automatically
+        // ✅ mark delivered BEFORE navigating (prevents double-trigger loops)
         await FirebaseFirestore.instance
-            .collection("devices")
-            .doc(deviceId)
-            .update({"fallDetected": false});
-      });
+            .collection("alerts")
+            .doc(doc.id)
+            .update({"delivered": true});
+
+        // ✅ wait until user closes AlertScreen
+        await Navigator.pushNamed(
+          context,
+          "/alert",
+          arguments: {
+            "alertId": doc.id,
+            "deviceId": cleanDeviceId,
+            "location": safeLocation,
+            "lat": safeLat,
+            "lng": safeLng,
+            "mapURL": safeMap,
+            "fallType": data["fallType"] ?? "Fall Detected",
+            "contacts": contacts,
+            "startSeconds": 8,
+          },
+        );
+
+      } finally {
+        // ✅ allow future alerts again
+        alertOpened = false;
+      }
     });
   }
 
-  // ===============================================================
-  // GET DEVICE ID
-  // ===============================================================
-  Future<String?> _getPairedDeviceId() async {
-    final prefs = await SharedPreferences.getInstance();
-    return prefs.getString("pairedDevice");
-  }
+ @override
+void dispose() {
+  alertListener?.cancel();
+  privacyListener?.cancel();
+  super.dispose();
+}
 
+
+  // ---------------------------------------------------------------
+  // UI
+  // ---------------------------------------------------------------
   @override
   Widget build(BuildContext context) {
-    return FutureBuilder<String?>(
-      future: _getPairedDeviceId(),
-      builder: (context, snap) {
-        if (!snap.hasData) return _loading();
-        if (snap.data == null) return _noDevice();
-        return _dashboard(context, snap.data!);
-      },
-    );
-  }
+    if (deviceId == null ||
+        deviceId!.isEmpty ||
+        caregiverId.isEmpty ||
+        cleanDeviceId.isEmpty) {
+      return _loading();
+    }
 
-  // ===============================================================
-  // MAIN DASHBOARD UI
-  // ===============================================================
-  Widget _dashboard(BuildContext context, String deviceId) {
     return Scaffold(
       backgroundColor: const Color(0xFF0E1625),
       body: SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // HEADER
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  const Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        "Dashboard",
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 28,
-                          fontWeight: FontWeight.w800,
-                        ),
-                      ),
-                      SizedBox(height: 4),
-                      Text(
-                        "Your safety monitoring center",
-                        style: TextStyle(
-                          color: Colors.white70,
-                          fontSize: 14,
-                        ),
-                      ),
-                    ],
-                  ),
-                  IconButton(
-                    icon: const Icon(Icons.settings, color: Colors.white70),
-                    onPressed: () => Navigator.pushNamed(context, "/settings"),
-                  ),
-                ],
-              ),
+        child: StreamBuilder<DocumentSnapshot>(
+          stream: FirebaseFirestore.instance
+              .collection("devices")
+              .doc(cleanDeviceId)
+              .snapshots(),
+          builder: (context, snap) {
+            if (!snap.hasData) return _loading();
 
-              const SizedBox(height: 22),
+            final data = snap.data!.data() as Map<String, dynamic>?;
 
-              // DEVICE STATUS STREAM
-              StreamBuilder<DocumentSnapshot>(
-                stream: FirebaseFirestore.instance
-                    .collection("devices")
-                    .doc(deviceId)
-                    .snapshots(),
-                builder: (context, snap) {
-                  if (!snap.hasData) return _statusLoadingCard();
-                  final raw = snap.data!.data() as Map<String, dynamic>?;
+            if (data == null) return _noData();
 
-                  if (raw == null) return _noDeviceDataCard();
+            final online = _isOnline(data["lastSync"]);
 
-                  // Battery
-                  final int battery = raw["batteryLevel"] ?? raw["battery"] ?? 0;
+            final fallDetected = data["fallDetected"] == true &&
+                data["fallStatus"] != "cancelled_by_device";
 
-                  // Online
-                  bool online = false;
-                  final syncRaw = raw["lastSync"];
-                  DateTime? dt;
-                  if (syncRaw is Timestamp) dt = syncRaw.toDate();
-                  if (syncRaw is String) dt = DateTime.tryParse(syncRaw);
-
-                  if (dt != null) {
-                    online = DateTime.now().difference(dt).inSeconds <= 20;
-                  }
-
-                  final lastSyncText = _formatTime(syncRaw);
-
-                  // small red tag if fallDetected
-                  bool fallDetected = raw["fallDetected"] == true;
-
-                  return _statusCard(
-                    online: online,
-                    battery: battery,
-                    lastSync: lastSyncText,
-                    fallDetected: fallDetected,
-                  );
-                },
-              ),
-
-              const SizedBox(height: 26),
-
-              _quickAccess(context),
-            ],
-          ),
+            return _dashboardUI(data, online, fallDetected);
+          },
         ),
       ),
     );
   }
 
-  // ===============================================================
-  // FORMAT TIME
-  // ===============================================================
-  String _formatTime(dynamic value) {
-    DateTime? dt;
-    if (value is Timestamp) dt = value.toDate();
-    if (value is String) dt = DateTime.tryParse(value);
+  // ------------------ UI HELPERS -----------------------
 
-    if (dt == null) return "Unknown";
+  Widget _loading() => const Scaffold(
+        backgroundColor: Color(0xFF0E1625),
+        body: Center(
+          child: CircularProgressIndicator(color: Color(0xFF33B5FF)),
+        ),
+      );
 
-    final diff = DateTime.now().difference(dt);
+  Widget _noData() => const Scaffold(
+        backgroundColor: Color(0xFF0E1625),
+        body: Center(
+          child: Text(
+            "Waiting for device data...",
+            style: TextStyle(color: Colors.white54),
+          ),
+        ),
+      );
 
-    if (diff.inSeconds < 60) return "Just now";
-    if (diff.inMinutes < 60) return "${diff.inMinutes} min ago";
-    if (diff.inHours < 24) return "${diff.inHours} hr ago";
-    return "${diff.inDays} days ago";
+  bool _isOnline(dynamic rawSync) {
+    DateTime? t;
+    if (rawSync is Timestamp) t = rawSync.toDate();
+    if (rawSync is String) t = DateTime.tryParse(rawSync);
+    if (t == null) return false;
+
+    return DateTime.now().difference(t).inSeconds <= 20;
   }
 
-  // ===============================================================
-  // UI CARDS
-  // ===============================================================
-  Widget _statusCard({
-    required bool online,
-    required int battery,
-    required String lastSync,
-    required bool fallDetected,
-  }) {
+  Widget _dashboardUI(
+      Map<String, dynamic> data, bool online, bool fallDetected) {
+    final battery = data["batteryLevel"] ?? 0;
+
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(18),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _header(),
+          const SizedBox(height: 22),
+          _statusCard(data, online, fallDetected, battery),
+          const SizedBox(height: 26),
+          _quickAccess(context),
+        ],
+      ),
+    );
+  }
+
+  Widget _header() {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: [
+        const Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text("Dashboard",
+                style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 28,
+                    fontWeight: FontWeight.w800)),
+            SizedBox(height: 4),
+            Text("Your safety monitoring center",
+                style: TextStyle(color: Colors.white70, fontSize: 14)),
+          ],
+        ),
+        IconButton(
+          icon: const Icon(Icons.settings, color: Colors.white70),
+          onPressed: () => Navigator.pushNamed(context, "/settings"),
+        ),
+      ],
+    );
+  }
+
+  Widget _statusCard(Map<String, dynamic> data, bool online,
+      bool fallDetected, int battery) {
+    final lastSync = data["lastSync"];
+
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
@@ -279,46 +325,23 @@ class _DashboardScreenState extends State<DashboardScreen> {
         children: [
           const Row(
             children: [
-              Icon(Icons.shield_outlined, color: Color(0xFF33B5FF), size: 22),
+              Icon(Icons.shield_outlined, color: Color(0xFF33B5FF)),
               SizedBox(width: 10),
-              Text(
-                "Device Status",
-                style: TextStyle(
-                  color: Colors.white,
-                  fontSize: 16,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
+              Text("Device Status",
+                  style: TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w700,
+                      fontSize: 16)),
             ],
           ),
 
           const SizedBox(height: 8),
+          if (!online) _offlineAlert(),
 
-          if (!online)
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(10),
-              margin: const EdgeInsets.only(bottom: 12),
-              decoration: BoxDecoration(
-                color: Colors.red.withOpacity(0.18),
-                borderRadius: BorderRadius.circular(10),
-                border: Border.all(color: Colors.red.withOpacity(0.25)),
-              ),
-              child: const Row(
-                children: [
-                  Icon(Icons.wifi_off, color: Colors.redAccent, size: 18),
-                  SizedBox(width: 8),
-                  Text(
-                    "Device is offline",
-                    style: TextStyle(color: Colors.redAccent, fontSize: 12),
-                  ),
-                ],
-              ),
-            ),
-
+          const SizedBox(height: 6),
           const Text(
-            "The Senra wearable detects falls and sends alerts to this app",
-            style: TextStyle(color: Colors.white70, fontSize: 13, height: 1.4),
+            "The Senra wearable detects falls and sends alerts to this app.",
+            style: TextStyle(color: Colors.white70, fontSize: 13),
           ),
 
           const SizedBox(height: 16),
@@ -329,19 +352,16 @@ class _DashboardScreenState extends State<DashboardScreen> {
               const Text(
                 "Device Connected —\nMonitoring Active",
                 style: TextStyle(
-                  color: Colors.white,
-                  fontWeight: FontWeight.w600,
-                  fontSize: 14,
-                  height: 1.3,
-                ),
+                    color: Colors.white,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600),
               ),
               Text(
                 online ? "✓ Online" : "• Offline",
                 style: TextStyle(
-                  color: online ? Colors.lightGreenAccent : Colors.redAccent,
-                  fontSize: 13,
-                  fontWeight: FontWeight.w600,
-                ),
+                    color:
+                        online ? Colors.lightGreenAccent : Colors.redAccent,
+                    fontWeight: FontWeight.w600),
               ),
             ],
           ),
@@ -353,24 +373,19 @@ class _DashboardScreenState extends State<DashboardScreen> {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Row(
-                children: [
-                  const Icon(Icons.battery_full_rounded,
-                      color: Colors.lightGreenAccent, size: 18),
-                  const SizedBox(width: 6),
-                  Text("Battery $battery%",
-                      style: const TextStyle(color: Colors.white)),
-                ],
-              ),
-              Row(
-                children: [
-                  const Icon(Icons.access_time,
-                      color: Colors.blueAccent, size: 18),
-                  const SizedBox(width: 6),
-                  Text("Last Sync: $lastSync",
-                      style: const TextStyle(color: Colors.white)),
-                ],
-              ),
+              Row(children: [
+                const Icon(Icons.battery_full_rounded,
+                    color: Colors.lightGreenAccent),
+                const SizedBox(width: 6),
+                Text("Battery $battery%",
+                    style: const TextStyle(color: Colors.white)),
+              ]),
+              Row(children: [
+                const Icon(Icons.access_time, color: Colors.blueAccent),
+                const SizedBox(width: 6),
+                Text("Last Sync: ${_formatTime(lastSync)}",
+                    style: const TextStyle(color: Colors.white)),
+              ]),
             ],
           ),
 
@@ -384,16 +399,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
               ),
               child: const Row(
                 children: [
-                  Icon(Icons.warning_amber_rounded, color: Colors.redAccent),
+                  Icon(Icons.warning_amber_rounded,
+                      color: Colors.redAccent),
                   SizedBox(width: 10),
-                  Text(
-                    "Fall Detected!",
-                    style: TextStyle(
-                      color: Colors.redAccent,
-                      fontWeight: FontWeight.bold,
-                      fontSize: 13,
-                    ),
-                  ),
+                  Text("Fall Detected!",
+                      style: TextStyle(
+                          color: Colors.redAccent,
+                          fontWeight: FontWeight.bold)),
                 ],
               ),
             ),
@@ -403,7 +415,37 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
-  // QUICK ACCESS
+  Widget _offlineAlert() {
+    return Container(
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: Colors.red.withOpacity(0.18),
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: const Row(
+        children: [
+          Icon(Icons.wifi_off, color: Colors.redAccent),
+          SizedBox(width: 8),
+          Text("Device is offline",
+              style: TextStyle(color: Colors.redAccent)),
+        ],
+      ),
+    );
+  }
+
+  String _formatTime(dynamic raw) {
+    DateTime? t;
+    if (raw is Timestamp) t = raw.toDate();
+    if (raw is String) t = DateTime.tryParse(raw);
+    if (t == null) return "Unknown";
+
+    final diff = DateTime.now().difference(t);
+    if (diff.inMinutes < 1) return "Just now";
+    if (diff.inMinutes < 60) return "${diff.inMinutes} min ago";
+    if (diff.inHours < 24) return "${diff.inHours} hr ago";
+    return "${diff.inDays} days ago";
+  }
+
   Widget _quickAccess(BuildContext context) {
     return Container(
       padding: const EdgeInsets.all(20),
@@ -414,21 +456,19 @@ class _DashboardScreenState extends State<DashboardScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text(
-            "Quick Access",
-            style: TextStyle(
-              color: Colors.white,
-              fontSize: 15,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
+          const Text("Quick Access",
+              style: TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.w700,
+                  fontSize: 15)),
           const SizedBox(height: 20),
 
           _quickItem(
             icon: Icons.show_chart_rounded,
             title: "Activity Log",
             subtitle: "View history",
-            onTap: () => Navigator.pushNamed(context, "/activity-history"),
+            onTap: () =>
+                Navigator.pushNamed(context, "/activity-history"),
           ),
           const SizedBox(height: 12),
 
@@ -469,23 +509,20 @@ class _DashboardScreenState extends State<DashboardScreen> {
         ),
         child: Row(
           children: [
-            Icon(icon, color: const Color(0xFF33B5FF), size: 24),
+            Icon(icon, color: const Color(0xFF33B5FF)),
             const SizedBox(width: 14),
             Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(title,
                     style: const TextStyle(
-                      color: Colors.white,
-                      fontWeight: FontWeight.w600,
-                      fontSize: 14,
-                    )),
+                        color: Colors.white,
+                        fontWeight: FontWeight.w600,
+                        fontSize: 14)),
                 const SizedBox(height: 2),
                 Text(subtitle,
-                    style: const TextStyle(
-                      color: Colors.white54,
-                      fontSize: 12,
-                    )),
+                    style:
+                        const TextStyle(color: Colors.white54, fontSize: 12)),
               ],
             ),
           ],
@@ -493,43 +530,4 @@ class _DashboardScreenState extends State<DashboardScreen> {
       ),
     );
   }
-
-  // Loading / fallback widgets
-  Widget _loading() => const Scaffold(
-        backgroundColor: Color(0xFF0E1625),
-        body: Center(
-            child: CircularProgressIndicator(color: Color(0xFF33B5FF))),
-      );
-
-  Widget _noDevice() => const Scaffold(
-        backgroundColor: Color(0xFF0E1625),
-        body: Center(
-          child: Text(
-            "No paired Senra device found.",
-            style: TextStyle(color: Colors.white70),
-          ),
-        ),
-      );
-
-  Widget _statusLoadingCard() => Container(
-        height: 150,
-        decoration: BoxDecoration(
-          color: const Color(0xFF162233),
-          borderRadius: BorderRadius.circular(16),
-        ),
-        child: const Center(
-            child: CircularProgressIndicator(color: Color(0xFF33B5FF))),
-      );
-
-  Widget _noDeviceDataCard() => Container(
-        padding: const EdgeInsets.all(20),
-        decoration: BoxDecoration(
-          color: const Color(0xFF162233),
-          borderRadius: BorderRadius.circular(16),
-        ),
-        child: const Text(
-          "Waiting for device data...",
-          style: TextStyle(color: Colors.white54),
-        ),
-      );
 }

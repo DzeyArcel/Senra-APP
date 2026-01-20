@@ -1,7 +1,15 @@
+// ============================================================
+// StartupRouter.dart — FINAL SENRA ROUTER (AUTH-SAFE)
+// ============================================================
+
 import 'dart:async';
 import 'package:flutter/material.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+
+// 🔔 Notification init
+import '../services/notification_initializer.dart';
 
 class StartupRouter extends StatefulWidget {
   const StartupRouter({super.key});
@@ -12,158 +20,196 @@ class StartupRouter extends StatefulWidget {
 
 class _StartupRouterState extends State<StartupRouter> {
   StreamSubscription? alertSub;
-  bool alertShown = false;
+  bool alertOpened = false;
+  bool routed = false;
 
-  // ============================================================
-  // DECIDE STARTUP SCREEN — NOW WITH ONBOARDING FLOW SUPPORT
-  // ============================================================
+  // ------------------------------------------------------------
+  String cleanId(dynamic v) {
+    if (v == null) return "";
+    return v.toString().replaceAll('"', "").trim();
+  }
+
+  // ------------------------------------------------------------
+  Future<bool> _deviceIsOnline(String deviceId) async {
+    try {
+      final snap = await FirebaseFirestore.instance
+          .collection("devices")
+          .doc(deviceId)
+          .get();
+
+      if (!snap.exists) return false;
+
+      final data = snap.data()!;
+      final status = data["status"] ?? "offline";
+      final lastSync = (data["lastSync"] as Timestamp?)?.toDate();
+
+      if (lastSync == null) return false;
+
+      final recentlyActive =
+          DateTime.now().difference(lastSync).inSeconds < 40;
+
+      return status == "online" && recentlyActive;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  // ------------------------------------------------------------
+  // 🔐 ROUTE DECISION (AUTH FIRST – FINAL)
+  // ------------------------------------------------------------
   Future<String> _decideRoute() async {
     final prefs = await SharedPreferences.getInstance();
+    final user = FirebaseAuth.instance.currentUser;
 
-    final caregiverId = prefs.getString("caregiverId");
-    final pairedDevice = prefs.getString("pairedDevice");
-    final onboarding = prefs.getBool("onboarding_complete") ?? false;
+    final seenWelcome = prefs.getBool("seen_welcome") ?? false;
+    final pairedDevice = prefs.getString("pairedDevice") ?? "";
+    final needsWifiSetup = prefs.getBool("needsWifiSetup") ?? true;
 
-    // -------------------------------------------------
-    // 1️⃣ No caregiver → Start from welcome
-    // -------------------------------------------------
-    if (caregiverId == null || caregiverId.isEmpty) {
+    // 1️⃣ FIRST TIME USER
+    if (!seenWelcome) {
       return "/welcome";
     }
 
-    // Check caregiver document
-    final caregiverSnap = await FirebaseFirestore.instance
+    // 2️⃣ NOT AUTHENTICATED → PHONE AUTH
+    if (user == null) {
+      return "/phone-auth";
+    }
+
+    final caregiverId = user.uid;
+
+    // 3️⃣ CAREGIVER PROFILE MUST EXIST
+    final cgSnap = await FirebaseFirestore.instance
         .collection("caregivers")
         .doc(caregiverId)
         .get();
 
-    if (!caregiverSnap.exists) {
-      await prefs.clear();
-      return "/welcome";
+    if (!cgSnap.exists) {
+      return "/caregiver-info";
     }
 
-    // -------------------------------------------------
-    // 2️⃣ Caregiver exists but ONBOARDING NOT FINISHED
-    // -------------------------------------------------
-    if (!onboarding) {
-      // Step A – caregiver filled info but no paired device
-      if (pairedDevice == null || pairedDevice.isEmpty) {
-        return "/device-pairing";
-      }
-
-      // Step B – device exists but has not reached "AllSet"
-      return "/device-connected";
+    // 4️⃣ NO DEVICE → PAIRING
+    if (pairedDevice.isEmpty) {
+      await prefs.setBool("needsWifiSetup", true);
+      return "/device-pairing";
     }
 
-    // -------------------------------------------------
-    // 3️⃣ Onboarding complete → check online status
-    // -------------------------------------------------
-    if (pairedDevice == null || pairedDevice.isEmpty) {
-      return "/dashboard"; // prevent loops
+    // 5️⃣ WIFI NOT FINISHED
+    if (needsWifiSetup) {
+      return "/connecting-senra";
     }
 
-    final deviceSnap = await FirebaseFirestore.instance
-        .collection("devices")
-        .doc(pairedDevice)
-        .get();
+    // 6️⃣ DEVICE ONLINE?
+    final online = await _deviceIsOnline(pairedDevice);
 
-    if (!deviceSnap.exists) {
+    if (online) {
+      await prefs.setBool("needsWifiSetup", false);
       return "/dashboard";
     }
 
-    final raw = deviceSnap.data() ?? {};
-
-    // ====== ONLINE CHECK (same 20s rule across app) ======
-    bool online = false;
-    final lastSyncRaw = raw["lastSync"];
-    DateTime? lastSync;
-
-    if (lastSyncRaw is Timestamp) {
-      lastSync = lastSyncRaw.toDate();
-    } else if (lastSyncRaw is String) {
-      lastSync = DateTime.tryParse(lastSyncRaw);
-    }
-
-    if (lastSync != null) {
-      final diff = DateTime.now().difference(lastSync).inSeconds;
-      online = diff <= 20;
-    }
-
-    return "/dashboard";
+    // 7️⃣ FALLBACK
+    return "/connecting-senra";
   }
 
-  // ============================================================
-  // REAL-TIME ALERT LISTENER — Only triggers after onboarding
-  // ============================================================
+  // ------------------------------------------------------------
+  // 🔔 ALERT LISTENER
+  // ------------------------------------------------------------
   Future<void> _listenForAlerts() async {
     final prefs = await SharedPreferences.getInstance();
-    final caregiverId = prefs.getString("caregiverId");
-    final pairedDevice = prefs.getString("pairedDevice");
-    final onboarding = prefs.getBool("onboarding_complete") ?? false;
+    final user = FirebaseAuth.instance.currentUser;
 
-    if (!onboarding) return; // do NOT interrupt onboarding
+    if (user == null) return;
 
-    if (caregiverId == null) return;
+    final caregiverId = user.uid;
+    final pairedDevice = prefs.getString("pairedDevice") ?? "";
+    final needsWifiSetup = prefs.getBool("needsWifiSetup") ?? true;
+
+    if (pairedDevice.isEmpty || needsWifiSetup) return;
+
+    await NotificationInitializer.init(caregiverId: caregiverId);
+
+    final watchDevice = cleanId(pairedDevice);
 
     alertSub = FirebaseFirestore.instance
         .collection("alerts")
-        .orderBy("timestamp", descending: true)
         .snapshots()
-        .listen((snap) {
-      if (alertShown) return;
+        .listen((snap) async {
       if (snap.docs.isEmpty) return;
 
-      for (final doc in snap.docs) {
-        final data = doc.data();
+      final sorted = List<QueryDocumentSnapshot>.from(snap.docs)
+        ..sort((a, b) {
+          final ad = a.data() as Map<String, dynamic>;
+          final bd = b.data() as Map<String, dynamic>;
 
-        // VALIDATE MATCH
-        final bool isMatch =
-            (data["caregiverId"] == caregiverId) ||
-            (data["deviceId"] == pairedDevice);
+          DateTime ta = (ad["timestamp"] is Timestamp)
+              ? ad["timestamp"].toDate()
+              : DateTime.tryParse(ad["timestamp"].toString()) ??
+                  DateTime(2000);
 
-        if (!isMatch) continue;
+          DateTime tb = (bd["timestamp"] is Timestamp)
+              ? bd["timestamp"].toDate()
+              : DateTime.tryParse(bd["timestamp"].toString()) ??
+                  DateTime(2000);
 
-        final delivered = data["delivered"] ?? false;
-        if (delivered) continue;
+          return tb.compareTo(ta);
+        });
 
-        FirebaseFirestore.instance
+      for (final doc in sorted) {
+        final data = doc.data() as Map<String, dynamic>;
+
+        if (cleanId(data["deviceId"]) != watchDevice) continue;
+
+        DateTime ts = (data["timestamp"] is Timestamp)
+            ? data["timestamp"].toDate()
+            : DateTime.tryParse(data["timestamp"].toString()) ??
+                DateTime(2000);
+
+        if (DateTime.now().difference(ts).inSeconds > 120) continue;
+        if (data["delivered"] == true) continue;
+
+        if (alertOpened) return;
+        alertOpened = true;
+
+        if (!routed && mounted) {
+          routed = true;
+          Navigator.pushReplacementNamed(
+            context,
+            "/alert",
+            arguments: {
+              "alertId": doc.id,
+              "deviceId": watchDevice,
+              "lat": data["lat"],
+              "lng": data["lng"],
+              "mapURL": data["mapURL"],
+              "fallType": data["fallType"] ?? "Fall Detected",
+            },
+          );
+        }
+
+        await FirebaseFirestore.instance
             .collection("alerts")
             .doc(doc.id)
             .update({"delivered": true});
 
-        alertShown = true;
-
-        Navigator.pushReplacementNamed(
-          context,
-          "/alert",
-          arguments: {
-            "location": data["location"] ?? "Unknown",
-            "lat": data["lat"],
-            "lng": data["lng"],
-            "mapURL": data["mapURL"],
-            "alertId": doc.id,
-            "fallType": data["fallType"] ?? "Fall Detected",
-          },
-        );
         break;
       }
     });
   }
 
-  // ============================================================
-  // INIT
-  // ============================================================
+  // ------------------------------------------------------------
   @override
   void initState() {
     super.initState();
 
-    // Alerts only after onboarding finished
-    _listenForAlerts();
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      await Future.delayed(const Duration(milliseconds: 300));
+      if (!mounted) return;
 
-    Future.delayed(const Duration(milliseconds: 200), () async {
+      _listenForAlerts();
+
       final route = await _decideRoute();
 
-      if (!alertShown && mounted) {
+      if (!routed && mounted && !alertOpened) {
+        routed = true;
         Navigator.pushReplacementNamed(context, route);
       }
     });
@@ -180,9 +226,7 @@ class _StartupRouterState extends State<StartupRouter> {
     return const Scaffold(
       backgroundColor: Color(0xFF0E1625),
       body: Center(
-        child: CircularProgressIndicator(
-          color: Color(0xFF33B5FF),
-        ),
+        child: CircularProgressIndicator(color: Color(0xFF33B5FF)),
       ),
     );
   }

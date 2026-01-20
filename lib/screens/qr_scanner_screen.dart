@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
 import 'device_pairing_screen.dart';
 
 class QrScannerScreen extends StatefulWidget {
@@ -10,27 +12,41 @@ class QrScannerScreen extends StatefulWidget {
 }
 
 class _QrScannerScreenState extends State<QrScannerScreen> {
-  bool scanned = false; // Prevent double scanning
+  bool scanned = false;
 
-  void _onDetect(BarcodeCapture capture) {
+  // ------------------------------------------------------------
+  // HANDLE QR RESULT
+  // ------------------------------------------------------------
+  Future<void> _handleDeviceId(String deviceId) async {
     if (scanned) return;
-
-    final List<Barcode> barcodes = capture.barcodes;
-    if (barcodes.isEmpty) return;
-
-    final code = barcodes.first.rawValue;
-    if (code == null || code.isEmpty) return;
-
     scanned = true;
+
+    final prefs = await SharedPreferences.getInstance();
+
+    // ✅ CRITICAL: persist pairing + wifi requirement
+    await prefs.setString("pairedDevice", deviceId);
+    await prefs.setBool("needsWifiSetup", true);
+
+    if (!mounted) return;
 
     Navigator.pushReplacement(
       context,
       MaterialPageRoute(
         builder: (_) => DevicePairingScreen(
-          scannedDeviceId: code.trim().toUpperCase(),
+          scannedDeviceId: deviceId,
         ),
       ),
     );
+  }
+
+  void _onDetect(BarcodeCapture capture) {
+    final barcodes = capture.barcodes;
+    if (barcodes.isEmpty) return;
+
+    final code = barcodes.first.rawValue;
+    if (code == null || code.isEmpty) return;
+
+    _handleDeviceId(code.trim().toUpperCase());
   }
 
   @override
@@ -49,11 +65,13 @@ class _QrScannerScreenState extends State<QrScannerScreen> {
                     onTap: () => Navigator.pop(context),
                     child: const Row(
                       children: [
-                        Icon(Icons.arrow_back, color: Colors.white70, size: 18),
+                        Icon(Icons.arrow_back,
+                            color: Colors.white70, size: 18),
                         SizedBox(width: 4),
                         Text(
                           "Back",
-                          style: TextStyle(color: Colors.white70, fontSize: 14),
+                          style:
+                              TextStyle(color: Colors.white70, fontSize: 14),
                         )
                       ],
                     ),
@@ -91,7 +109,7 @@ class _QrScannerScreenState extends State<QrScannerScreen> {
 
             const SizedBox(height: 30),
 
-            // SCANNER BOX (Figma Style)
+            // SCANNER
             Expanded(
               child: Center(
                 child: Container(
@@ -108,7 +126,7 @@ class _QrScannerScreenState extends State<QrScannerScreen> {
                           onDetect: _onDetect,
                         ),
 
-                        // Blue border overlay
+                        // Border
                         Positioned.fill(
                           child: Container(
                             decoration: BoxDecoration(
@@ -121,7 +139,6 @@ class _QrScannerScreenState extends State<QrScannerScreen> {
                           ),
                         ),
 
-                        // Frame icon text
                         const Center(
                           child: Text(
                             "Position QR code within frame",
@@ -140,18 +157,12 @@ class _QrScannerScreenState extends State<QrScannerScreen> {
 
             const SizedBox(height: 30),
 
-            // SIMULATE BUTTON
+            // SIMULATE BUTTON (DEV ONLY)
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16),
               child: GestureDetector(
                 onTap: () {
-                  Navigator.pushReplacement(
-                    context,
-                    MaterialPageRoute(
-                      builder: (_) =>
-                          const DevicePairingScreen(scannedDeviceId: "SNR-TEST-001"),
-                    ),
-                  );
+                  _handleDeviceId("SNR-TEST-001");
                 },
                 child: Container(
                   width: double.infinity,

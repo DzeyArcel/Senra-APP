@@ -1,7 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:firebase_auth/firebase_auth.dart';
+import '../services/notification_initializer.dart';
+
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -27,9 +28,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _loadSettings();
   }
 
-  // =================================================================
-  // 🔥 LOAD SETTINGS FROM FIRESTORE (REALTIME SNAPSHOT)
-  // =================================================================
+  // ================================================================
+  // 🔥 LOAD SETTINGS VIA REALTIME FIRESTORE LISTENER
+  // ================================================================
   Future<void> _loadSettings() async {
     final prefs = await SharedPreferences.getInstance();
     caregiverId = prefs.getString("caregiverId") ?? "";
@@ -39,7 +40,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
       return;
     }
 
-    // REALTIME LISTENER
     FirebaseFirestore.instance
         .collection("caregivers")
         .doc(caregiverId)
@@ -61,9 +61,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
     });
   }
 
-  // =================================================================
-  // 🔥 SAVE TOGGLES (MERGE)
-  // =================================================================
+  // ================================================================
+  // 🔥 SAVE FIRESTORE TOGGLE (MERGE)
+  // ================================================================
   Future<void> _saveToggle(String key, bool value) async {
     if (caregiverId.isEmpty) return;
 
@@ -73,33 +73,21 @@ class _SettingsScreenState extends State<SettingsScreen> {
         .set({key: value}, SetOptions(merge: true));
   }
 
-  // =================================================================
-  // 🔥 SIGN OUT — FirebaseAuth + Clear SharedPreferences
-  // =================================================================
+  // ================================================================
+  // ❌ SIGN OUT — No FirebaseAuth, only clear SharedPreferences
+  // ================================================================
   Future<void> _signOut() async {
-    try {
-      await FirebaseAuth.instance.signOut();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.clear();
 
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.clear();
+    if (!mounted) return;
 
-      if (!mounted) return;
-
-      Navigator.pushNamedAndRemoveUntil(context, "/welcome", (_) => false);
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text("Failed to sign out."),
-          backgroundColor: Colors.redAccent,
-        ),
-      );
-    }
+    Navigator.pushNamedAndRemoveUntil(context, "/welcome", (_) => false);
   }
 
-  // =================================================================
+  // ================================================================
   // UI
-  // =================================================================
+  // ================================================================
   @override
   Widget build(BuildContext context) {
     if (loading) {
@@ -118,10 +106,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-
-              // ===========================================================
-              // 🔙 HEADER
-              // ===========================================================
+              // HEADER
               Row(
                 children: [
                   IconButton(
@@ -149,9 +134,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
               const SizedBox(height: 24),
 
-              // ===========================================================
-              // 🔧 DEVICE MANAGEMENT
-              // ===========================================================
+              // DEVICE
               _card(
                 Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -206,9 +189,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
               const SizedBox(height: 20),
 
-              // ===========================================================
-              // 📍 LOCATION & PRIVACY
-              // ===========================================================
+              // PRIVACY & LOCATION
               _card(
                 Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -232,9 +213,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
               const SizedBox(height: 20),
 
-              // ===========================================================
-              // 🔔 NOTIFICATIONS
-              // ===========================================================
+              // NOTIFICATIONS
               _card(
                 Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -243,14 +222,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     const SizedBox(height: 18),
 
                     _toggle(
-                      title: "Push Notifications",
-                      subtitle: "Receive fall alerts on this device",
-                      value: pushNotifications,
-                      onChanged: (v) {
-                        setState(() => pushNotifications = v);
-                        _saveToggle("pushNotifications", v);
-                      },
-                    ),
+  title: "Push Notifications",
+  subtitle: "Receive fall alerts on this device",
+  value: pushNotifications,
+  onChanged: (v) async {
+    setState(() => pushNotifications = v);
+    await _saveToggle("pushNotifications", v);
+    await NotificationInitializer.updatePushPreference(v);
+  },
+),
 
                     const SizedBox(height: 16),
 
@@ -269,9 +249,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
               const SizedBox(height: 20),
 
-              // ===========================================================
-              // 👤 ACCOUNT
-              // ===========================================================
+              // ACCOUNT
               _card(
                 Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -286,8 +264,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
                     const SizedBox(height: 16),
                     Container(height: 1, color: Colors.white12),
-                    const SizedBox(height: 14),
 
+                    const SizedBox(height: 14),
                     Center(
                       child: GestureDetector(
                         onTap: _signOut,
@@ -312,9 +290,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
               const SizedBox(height: 30),
 
-              // ===========================================================
-              // 📱 APP INFO
-              // ===========================================================
+              // APP INFO
               _card(
                 Column(
                   children: const [
@@ -345,9 +321,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
-  // =================================================================
-  //  UI HELPERS
-  // =================================================================
+  // ================================================================
+  // UI HELPERS
+  // ================================================================
 
   Widget _card(Widget child) {
     return Container(
@@ -445,8 +421,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               style: TextStyle(
                 color: Colors.white,
                 fontSize: 16,
-                fontWeight: FontWeight.w700,
-              ),
+                fontWeight: FontWeight.w700),
             ),
           ],
         ),

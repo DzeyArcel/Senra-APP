@@ -1,9 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:shared_preferences/shared_preferences.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 
 import 'device_pairing_screen.dart';
-import 'dashboard_screen.dart';
 
 class CaregiverInfoScreen extends StatefulWidget {
   const CaregiverInfoScreen({super.key});
@@ -14,7 +13,6 @@ class CaregiverInfoScreen extends StatefulWidget {
 
 class _CaregiverInfoScreenState extends State<CaregiverInfoScreen> {
   final TextEditingController nameController = TextEditingController();
-  final TextEditingController phoneController = TextEditingController();
 
   final TextEditingController emergencyName1 = TextEditingController();
   final TextEditingController emergencyPhone1 = TextEditingController();
@@ -23,197 +21,115 @@ class _CaregiverInfoScreenState extends State<CaregiverInfoScreen> {
   bool showEmergencyFields = false;
 
   // =============================================================
-  // PHONE VALIDATOR (PHILIPPINES)
+  // PHONE NORMALIZER (PH)
   // =============================================================
-  String? validatePH(String input) {
+  String? normalizePH(String input) {
     input = input.trim();
 
-    final plus63 = RegExp(r'^\+639\d{9}$');
-    final zero9 = RegExp(r'^09\d{9}$');
-    final nineStart = RegExp(r'^9\d{9}$');
-    final sixThree = RegExp(r'^639\d{9}$');
+    final r1 = RegExp(r'^\+639\d{9}$');
+    final r2 = RegExp(r'^09\d{9}$');
+    final r3 = RegExp(r'^9\d{9}$');
+    final r4 = RegExp(r'^639\d{9}$');
 
-    if (plus63.hasMatch(input)) return input.replaceFirst('+63', '0');
-    if (zero9.hasMatch(input)) return input;
-    if (nineStart.hasMatch(input)) return "0$input";
-    if (sixThree.hasMatch(input)) return input.replaceFirst('63', '0');
+    if (r1.hasMatch(input)) return input;
+    if (r2.hasMatch(input)) return "+63${input.substring(1)}";
+    if (r3.hasMatch(input)) return "+63$input";
+    if (r4.hasMatch(input)) return "+$input";
 
     return null;
   }
 
   // =============================================================
-  // SAVE & LOGIN LOGIC (UPDATED + FIXED)
+  // SAVE PROFILE (NO LOGIN LOGIC)
   // =============================================================
   Future<void> saveCaregiverInfo() async {
-    final name = nameController.text.trim();
-    final normalizedPhone = validatePH(phoneController.text.trim());
+    final user = FirebaseAuth.instance.currentUser;
 
-    if (name.isEmpty || normalizedPhone == null) {
-      _error("Enter a valid name and Filipino phone number.");
+    if (user == null) {
+      return _error("Authentication not ready. Please restart app.");
+    }
+
+    final name = nameController.text.trim();
+    if (name.isEmpty) {
+      return _error("Please enter your name.");
+    }
+
+    // Step 1 — ask for emergency contact first
+    if (!showEmergencyFields) {
+      setState(() => showEmergencyFields = true);
       return;
+    }
+
+    final emergencyPhone = normalizePH(emergencyPhone1.text);
+    if (emergencyName1.text.isEmpty || emergencyPhone == null) {
+      return _error("Enter valid emergency contact details.");
     }
 
     setState(() => isSaving = true);
 
     try {
       final firestore = FirebaseFirestore.instance;
-      final prefs = await SharedPreferences.getInstance();
+      final uid = user.uid;
 
-      // Check if caregiver already exists (NAME + PHONE)
-      final searchSnap = await firestore
+      // ---------------------------------------------------------
+      // CREATE / UPDATE CAREGIVER PROFILE
+      // ---------------------------------------------------------
+      await firestore.collection("caregivers").doc(uid).set({
+        "name": name,
+        "phone": user.phoneNumber ?? "",
+        "pairedDevice": "",
+        "locationSharing": true,
+        "pushNotifications": true,
+        "smsNotifications": true,
+
+        // emergency (duplicate for quick access)
+        "emergencyName": emergencyName1.text.trim(),
+        "emergencyPhone": emergencyPhone,
+
+        "updated_at": FieldValue.serverTimestamp(),
+        "created_at": FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
+
+      // emergency contact subcollection
+      await firestore
           .collection("caregivers")
-          .where("name", isEqualTo: name)
-          .where("phone", isEqualTo: normalizedPhone)
-          .limit(1)
-          .get();
-
-      // =====================================================================
-      // 1️⃣ NEW CAREGIVER
-      // =====================================================================
-      if (searchSnap.docs.isEmpty) {
-        // First press → reveal emergency fields only
-        if (!showEmergencyFields) {
-          setState(() {
-            showEmergencyFields = true;
-            isSaving = false;
-          });
-          return;
-        }
-
-        // Validate emergency contact
-        final emergencyPhone = validatePH(emergencyPhone1.text.trim());
-        if (emergencyName1.text.trim().isEmpty || emergencyPhone == null) {
-          setState(() => isSaving = false);
-          _error("Please enter a valid emergency contact.");
-          return;
-        }
-
-        // Create new caregiver
-        final newRef = await firestore.collection("caregivers").add({
-          "name": name,
-          "phone": normalizedPhone,
-          "pairedDevice": "",
-          "created_at": FieldValue.serverTimestamp(),
-        });
-
-        // Emergency contact
-        await newRef.collection("contacts").doc("primary").set({
-          "name": emergencyName1.text.trim(),
-          "phone": emergencyPhone,
-          "added_at": FieldValue.serverTimestamp(),
-        });
-
-        // Save session
-        await prefs.setString("caregiverId", newRef.id);
-        await prefs.setString("caregiverName", name);
-        await prefs.setString("caregiverPhone", normalizedPhone);
-
-        // ⭐ REQUIRED FOR ROUTER ⭐
-        await prefs.setString("pairedDevice", "");
-
-        // Mark onboarding complete
-        await prefs.setBool("onboarding_complete", true);
-
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(builder: (_) => const DevicePairingScreen()),
-        );
-
-        setState(() => isSaving = false);
-        return;
-      }
-
-      // =====================================================================
-      // 2️⃣ RETURNING CAREGIVER
-      // =====================================================================
-      final caregiverDoc = searchSnap.docs.first;
-      final caregiverId = caregiverDoc.id;
-      final data = caregiverDoc.data();
-
-      // Check for emergency contact
-      final contact = await firestore
-          .collection("caregivers")
-          .doc(caregiverId)
+          .doc(uid)
           .collection("contacts")
           .doc("primary")
-          .get();
+          .set({
+        "name": emergencyName1.text.trim(),
+        "phone": emergencyPhone,
+        "added_at": FieldValue.serverTimestamp(),
+      });
 
-      if (!contact.exists) {
-        // Reveal emergency fields
-        if (!showEmergencyFields) {
-          setState(() {
-            showEmergencyFields = true;
-            isSaving = false;
-          });
-          return;
-        }
+      if (!mounted) return;
 
-        // Validate emergency info
-        final emergencyPhone = validatePH(emergencyPhone1.text.trim());
-        if (emergencyName1.text.trim().isEmpty || emergencyPhone == null) {
-          setState(() => isSaving = false);
-          _error("Please enter emergency contact.");
-          return;
-        }
-
-        // Save emergency contact
-        await firestore
-            .collection("caregivers")
-            .doc(caregiverId)
-            .collection("contacts")
-            .doc("primary")
-            .set({
-          "name": emergencyName1.text.trim(),
-          "phone": emergencyPhone,
-          "added_at": FieldValue.serverTimestamp(),
-        });
-      }
-
-      // Save session
-      await prefs.setString("caregiverId", caregiverId);
-      await prefs.setString("caregiverName", data["name"]);
-      await prefs.setString("caregiverPhone", data["phone"]);
-
-      // ⭐ NEW: Save pairedDevice locally ⭐
-      final pairedDevice = data["pairedDevice"] ?? "";
-      await prefs.setString("pairedDevice", pairedDevice);
-
-      await prefs.setBool("onboarding_complete", true);
-
-      // If already paired → Dashboard
-      if (pairedDevice != "") {
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(builder: (_) => const DashboardScreen()),
-        );
-      } else {
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(builder: (_) => const DevicePairingScreen()),
-        );
-      }
+      // ---------------------------------------------------------
+      // CONTINUE TO DEVICE PAIRING
+      // ---------------------------------------------------------
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(builder: (_) => const DevicePairingScreen()),
+      );
     } catch (e) {
-      _error("Something went wrong.");
-      debugPrint("❌ $e");
+      debugPrint("Caregiver profile save failed: $e");
+      _error("Failed to save caregiver info.");
     }
 
     setState(() => isSaving = false);
   }
 
   // =============================================================
-  // UI HELPERS
+  // ERROR HANDLER
   // =============================================================
   void _error(String msg) {
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(msg),
-        backgroundColor: Colors.redAccent,
-      ),
+      SnackBar(content: Text(msg), backgroundColor: Colors.redAccent),
     );
   }
 
   // =============================================================
-  // UI
+  // UI (UNCHANGED STYLE)
   // =============================================================
   @override
   Widget build(BuildContext context) {
@@ -249,52 +165,14 @@ class _CaregiverInfoScreenState extends State<CaregiverInfoScreen> {
                               fontSize: 18,
                               fontWeight: FontWeight.w700),
                         ),
-                        const SizedBox(height: 6),
-                        const Text(
-                          "Enter your caregiver profile below.",
-                          style: TextStyle(color: Colors.white70, fontSize: 13),
-                        ),
 
                         const SizedBox(height: 20),
                         _label("Your Name"),
                         _input(nameController, "Your Name"),
 
-                        const SizedBox(height: 16),
-                        _label("Your Phone (+63)"),
-                        _input(phoneController, "+63"),
+                        const SizedBox(height: 24),
 
-                        const SizedBox(height: 20),
-
-                        if (showEmergencyFields) ...[
-                          const Text(
-                            "Emergency Contact",
-                            style: TextStyle(
-                              color: Colors.white70,
-                              fontSize: 14,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                          const SizedBox(height: 12),
-
-                          Container(
-                            padding: const EdgeInsets.all(14),
-                            decoration: BoxDecoration(
-                              color: const Color(0xFF1B2A3A),
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                _input(emergencyName1,
-                                    "Emergency Contact Name"),
-                                const SizedBox(height: 10),
-                                _input(emergencyPhone1,
-                                    "Emergency Contact Phone (+63)"),
-                              ],
-                            ),
-                          ),
-                          const SizedBox(height: 20),
-                        ],
+                        if (showEmergencyFields) _emergencySection(),
 
                         GestureDetector(
                           onTap: isSaving ? null : saveCaregiverInfo,
@@ -308,12 +186,14 @@ class _CaregiverInfoScreenState extends State<CaregiverInfoScreen> {
                             ),
                             child: Center(
                               child: Text(
-                                isSaving ? "Saving..." : "Save & Continue",
+                                isSaving
+                                    ? "Saving..."
+                                    : (showEmergencyFields
+                                        ? "Finish Registration"
+                                        : "Next"),
                                 style: const TextStyle(
-                                  color: Colors.black87,
-                                  fontWeight: FontWeight.w600,
-                                  fontSize: 15,
-                                ),
+                                    color: Colors.black87,
+                                    fontWeight: FontWeight.w600),
                               ),
                             ),
                           ),
@@ -327,7 +207,7 @@ class _CaregiverInfoScreenState extends State<CaregiverInfoScreen> {
 
             if (isSaving)
               Container(
-                color: Colors.black54,
+                color: Colors.black45,
                 child: const Center(
                   child: CircularProgressIndicator(color: Colors.white),
                 ),
@@ -338,12 +218,13 @@ class _CaregiverInfoScreenState extends State<CaregiverInfoScreen> {
     );
   }
 
+  // =============================================================
+  // UI HELPERS
+  // =============================================================
   Widget _label(String text) => Padding(
         padding: const EdgeInsets.only(bottom: 6),
-        child: Text(
-          text,
-          style: const TextStyle(color: Colors.white, fontSize: 14),
-        ),
+        child: Text(text,
+            style: const TextStyle(color: Colors.white70, fontSize: 14)),
       );
 
   Widget _input(TextEditingController c, String hint) {
@@ -359,10 +240,43 @@ class _CaregiverInfoScreenState extends State<CaregiverInfoScreen> {
           hintText: hint,
           hintStyle: const TextStyle(color: Colors.white38),
           border: InputBorder.none,
-          contentPadding: const EdgeInsets.symmetric(
-              horizontal: 14, vertical: 14),
+          contentPadding:
+              const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
         ),
       ),
+    );
+  }
+
+  Widget _emergencySection() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          "Emergency Contact (Required)",
+          style: TextStyle(
+              color: Colors.white70,
+              fontSize: 14,
+              fontWeight: FontWeight.w600),
+        ),
+        const SizedBox(height: 12),
+
+        Container(
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            color: const Color(0xFF1B2A3A),
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Column(
+            children: [
+              _input(emergencyName1, "Contact Name"),
+              const SizedBox(height: 10),
+              _input(emergencyPhone1, "09xxxxxxxxx"),
+            ],
+          ),
+        ),
+
+        const SizedBox(height: 24),
+      ],
     );
   }
 }
