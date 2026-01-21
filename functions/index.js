@@ -14,59 +14,83 @@ exports.sendFallAlert = onDocumentCreated(
     const data = snap.data();
     const alertId = event.params.alertId;
 
+    // ✅ Only pending alerts
     if (data.status !== "pending") {
-      console.log("⏭ Alert not pending, skipping");
+      console.log("⏭ Alert not pending, skipping:", alertId);
       return;
     }
 
-    const caregiverId = data.caregiverId;
-    if (!caregiverId) {
-      console.log("❌ Missing caregiverId");
+    const deviceId = data.deviceId;
+    if (!deviceId) {
+      console.log("❌ Missing deviceId in alert:", alertId);
       return;
     }
 
-    const caregiverSnap = await getFirestore()
+    // 🔍 FIND CAREGIVER BY PAIRED DEVICE (KEY FIX)
+    const caregiversSnap = await getFirestore()
       .collection("caregivers")
-      .doc(caregiverId)
+      .where("pairedDevice", "==", deviceId)
+      .limit(1)
       .get();
 
-    if (!caregiverSnap.exists) {
-      console.log("❌ Caregiver not found");
+    if (caregiversSnap.empty) {
+      console.log("❌ Caregiver not found for device:", deviceId);
       return;
     }
 
-    const caregiver = caregiverSnap.data();
+    const caregiverDoc = caregiversSnap.docs[0];
+    const caregiver = caregiverDoc.data();
+    const caregiverId = caregiverDoc.id;
 
+    console.log("✅ Caregiver found:", caregiverId);
+
+    // 🔕 Push disabled
     if (caregiver.pushNotifications !== true) {
-      console.log("🔕 Push disabled");
+      console.log("🔕 Push disabled for caregiver:", caregiverId);
       return;
     }
 
     if (!caregiver.fcmToken) {
-      console.log("❌ No FCM token");
+      console.log("❌ No FCM token for caregiver:", caregiverId);
       return;
     }
 
     const payload = {
-      token: caregiver.fcmToken,
-      notification: {
-        title: "🚨 SENRA EMERGENCY",
-        body: data.fallType || "Fall detected",
-      },
-      android: {
-        priority: "high",
-        notification: {
-          channelId: "senra_alerts",
-          sound: "default",
-        },
-      },
-      data: {
-        alertId,
-        deviceId: data.deviceId || "",
-      },
-    };
+  token: caregiver.fcmToken,
 
+  notification: {
+    title: "🚨 Senra Emergency",
+    body: "A fall was detected. Tap to view details and respond.",
+  },
+
+  android: {
+    priority: "high",
+    notification: {
+      channelId: "senra_alerts",
+      sound: "default",
+      visibility: "public", // shows full text on lock screen
+      category: "alarm",    // makes it heads-up & urgent
+    },
+  },
+
+  data: {
+    alertId,
+    deviceId,
+  },
+};
+
+
+    // 📲 SEND PUSH
     await getMessaging().send(payload);
     console.log("✅ Notification sent:", alertId);
+
+    // ✅ OPTIONAL: Mark delivered + attach caregiverId
+    await getFirestore()
+      .collection("alerts")
+      .doc(alertId)
+      .update({
+        delivered: true,
+        caregiverId,
+      });
   }
 );

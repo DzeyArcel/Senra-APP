@@ -1,5 +1,5 @@
 // ============================================================
-// AlertScreen.dart — FINAL SENRA VERSION (2026)
+// AlertScreen.dart — SENRA BEST-PRACTICE VERSION (2026)
 // ============================================================
 
 import 'dart:async';
@@ -7,29 +7,34 @@ import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:vibration/vibration.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
 class AlertScreen extends StatefulWidget {
   final String alertId;
   final String deviceId;
-  final String location;
-  final double lat;
-  final double lng;
-  final String mapURL;
   final String fallType;
-  final List<Map<String, String>> contacts;
+
+  // 🔥 DECISIONS PASSED IN (NO FETCHING HERE)
+  final bool vibrate;
+  final bool playSound;
+  final bool showLocation;
+
+  final double? lat;
+  final double? lng;
+  final String locationLabel;
+
   final int startSeconds;
 
   const AlertScreen({
     super.key,
     required this.alertId,
     required this.deviceId,
-    required this.location,
-    required this.lat,
-    required this.lng,
-    required this.mapURL,
     required this.fallType,
-    required this.contacts,
+    required this.vibrate,
+    required this.playSound,
+    required this.showLocation,
+    this.lat,
+    this.lng,
+    this.locationLabel = "",
     this.startSeconds = 30,
   });
 
@@ -45,22 +50,22 @@ class _AlertScreenState extends State<AlertScreen> {
 
   bool handled = false;
   bool redirected = false;
-  bool vibrationEnabled = true;
 
   StreamSubscription<DocumentSnapshot>? alertListener;
   StreamSubscription<DocumentSnapshot>? deviceListener;
 
+  // ============================================================
+  // INIT
+  // ============================================================
   @override
   void initState() {
     super.initState();
 
     seconds = widget.startSeconds;
 
-    WidgetsBinding.instance.addPostFrameCallback((_) async {
-      await _loadVibrationPreference();
-      _initializeAlert();
-      _startCountdown();
-    });
+    _startImmediateFeedback(); // 🔥 instant
+    _startListeners();
+    _startCountdown();
   }
 
   @override
@@ -68,52 +73,38 @@ class _AlertScreenState extends State<AlertScreen> {
     timer?.cancel();
     alertListener?.cancel();
     deviceListener?.cancel();
-    audioPlayer.stop();
-    audioPlayer.dispose();
+    _stopSound();
     _stopVibration();
+    audioPlayer.dispose();
     super.dispose();
   }
 
-  // -----------------------------------------------------------
-  // INITIALIZATION
-  // -----------------------------------------------------------
-  void _initializeAlert() {
-    _startAlertStatusListener(widget.alertId);
-    _startDeviceCancelListener(widget.deviceId);
-    _playAlertSound();
+  // ============================================================
+  // 🔥 IMMEDIATE FEEDBACK (NO ASYNC)
+  // ============================================================
+  void _startImmediateFeedback() {
+    if (widget.playSound) _playAlertSound();
+    if (widget.vibrate) _startVibration();
   }
 
-  // -----------------------------------------------------------
-  // VIBRATION CONTROL
-  // -----------------------------------------------------------
-  Future<void> _loadVibrationPreference() async {
-    final prefs = await SharedPreferences.getInstance();
-    final caregiverId = prefs.getString("caregiverId") ?? "";
-
-    if (caregiverId.isEmpty) return;
-
-    final doc = await FirebaseFirestore.instance
-        .collection("caregivers")
-        .doc(caregiverId)
-        .get();
-
-    vibrationEnabled = doc.data()?['emergencyVibration'] ?? true;
-
-    if (vibrationEnabled) _startVibration();
-  }
-
+  // ============================================================
+  // VIBRATION
+  // ============================================================
   Future<void> _startVibration() async {
     final hasVibrator = await Vibration.hasVibrator();
     if (hasVibrator == true) {
-      Vibration.vibrate(pattern: [0, 1000, 500, 1000], repeat: 0);
+      Vibration.vibrate(
+        pattern: [0, 1000, 500, 1000, 500, 1000],
+        repeat: 0,
+      );
     }
   }
 
   void _stopVibration() => Vibration.cancel();
 
-  // -----------------------------------------------------------
-  // AUDIO
-  // -----------------------------------------------------------
+  // ============================================================
+  // SOUND
+  // ============================================================
   Future<void> _playAlertSound() async {
     await audioPlayer.setReleaseMode(ReleaseMode.loop);
     await audioPlayer.play(AssetSource("sounds/alert.wav"));
@@ -121,9 +112,9 @@ class _AlertScreenState extends State<AlertScreen> {
 
   void _stopSound() => audioPlayer.stop();
 
-  // -----------------------------------------------------------
+  // ============================================================
   // COUNTDOWN
-  // -----------------------------------------------------------
+  // ============================================================
   void _startCountdown() {
     timer = Timer.periodic(const Duration(seconds: 1), (t) {
       if (seconds > 1) {
@@ -135,16 +126,43 @@ class _AlertScreenState extends State<AlertScreen> {
     });
   }
 
-  // -----------------------------------------------------------
+  // ============================================================
+  // FIRESTORE LISTENERS
+  // ============================================================
+  void _startListeners() {
+    alertListener = FirebaseFirestore.instance
+        .collection("alerts")
+        .doc(widget.alertId)
+        .snapshots()
+        .listen((snap) {
+      final status = snap.data()?["status"];
+      if (status == "handled" || status == "cancelled_by_device") {
+        _handleExternalCancel();
+      }
+    });
+
+    deviceListener = FirebaseFirestore.instance
+        .collection("devices")
+        .doc(widget.deviceId)
+        .snapshots()
+        .listen((snap) {
+      final status = snap.data()?["fallStatus"];
+      if (status == "cancelled_by_device") {
+        _handleExternalCancel();
+      }
+    });
+  }
+
+  // ============================================================
   // SEND ALERT
-  // -----------------------------------------------------------
+  // ============================================================
   Future<void> _finalizeAlert() async {
     if (handled) return;
-
     handled = true;
 
     _stopSound();
     _stopVibration();
+    timer?.cancel();
 
     try {
       await FirebaseFirestore.instance
@@ -159,29 +177,24 @@ class _AlertScreenState extends State<AlertScreen> {
     if (!mounted) return;
 
     Navigator.pushReplacementNamed(context, "/help-notified", arguments: {
-      "location": widget.location,
-      "lat": widget.lat,
-      "lng": widget.lng,
-      "mapURL": widget.mapURL,
-      "contacts": widget.contacts,
       "alertId": widget.alertId,
       "fallType": widget.fallType,
-      "sentTime": TimeOfDay.now().format(context),
+      "lat": widget.showLocation ? widget.lat : null,
+      "lng": widget.showLocation ? widget.lng : null,
     });
   }
 
-  // -----------------------------------------------------------
-  // REAL CANCEL (FALSE ALARM)
-  // -----------------------------------------------------------
-  Future<void> cancelAlert() async {
+  // ============================================================
+  // CANCEL ALERT
+  // ============================================================
+  Future<void> _cancelAlert() async {
     if (handled) return;
-
     handled = true;
     redirected = true;
 
-    timer?.cancel();
     _stopSound();
     _stopVibration();
+    timer?.cancel();
 
     try {
       await FirebaseFirestore.instance
@@ -197,48 +210,26 @@ class _AlertScreenState extends State<AlertScreen> {
     Navigator.pushReplacementNamed(context, "/dashboard");
   }
 
-  // -----------------------------------------------------------
-  // DEVICE + CLOUD LISTENERS
-  // -----------------------------------------------------------
-  void _startDeviceCancelListener(String id) {
-    deviceListener = FirebaseFirestore.instance
-        .collection("devices")
-        .doc(id)
-        .snapshots()
-        .listen((snap) {
-      final status = snap.data()?["fallStatus"];
-      if (status == "cancelled_by_device") _handleExternalCancel();
-    });
-  }
-
-  void _startAlertStatusListener(String id) {
-    alertListener = FirebaseFirestore.instance
-        .collection("alerts")
-        .doc(id)
-        .snapshots()
-        .listen((snap) {
-      final status = snap.data()?["status"];
-      if (status == "handled") _handleExternalCancel();
-    });
-  }
-
+  // ============================================================
+  // EXTERNAL CANCEL
+  // ============================================================
   void _handleExternalCancel() {
     if (handled || redirected) return;
 
     handled = true;
     redirected = true;
 
-    timer?.cancel();
     _stopSound();
     _stopVibration();
+    timer?.cancel();
 
     if (!mounted) return;
     Navigator.pushReplacementNamed(context, "/dashboard");
   }
 
-  // -----------------------------------------------------------
+  // ============================================================
   // UI
-  // -----------------------------------------------------------
+  // ============================================================
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -250,10 +241,10 @@ class _AlertScreenState extends State<AlertScreen> {
           decoration: BoxDecoration(
             color: const Color(0xFF111827),
             borderRadius: BorderRadius.circular(18),
-            border: Border.all(color: Colors.redAccent.withOpacity(0.35)),
+            border: Border.all(color: Colors.redAccent.withOpacity(0.4)),
             boxShadow: [
               BoxShadow(
-                color: Colors.redAccent.withOpacity(0.25),
+                color: Colors.redAccent.withOpacity(0.3),
                 blurRadius: 40,
                 spreadRadius: 6,
               ),
@@ -263,28 +254,48 @@ class _AlertScreenState extends State<AlertScreen> {
             Row(children: const [
               Icon(Icons.warning_amber_rounded, color: Colors.redAccent),
               SizedBox(width: 8),
-              Text("Fall detected",
-                  style: TextStyle(
-                      color: Colors.redAccent,
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold)),
+              Text(
+                "Fall detected",
+                style: TextStyle(
+                    color: Colors.redAccent,
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold),
+              ),
             ]),
             const SizedBox(height: 14),
-            Text(widget.location, style: const TextStyle(color: Colors.white)),
+
+            // 📍 LOCATION DISPLAY
+            if (widget.showLocation && widget.locationLabel.isNotEmpty)
+              Text(widget.locationLabel,
+                  style: const TextStyle(color: Colors.white))
+            else
+              const Text(
+                "Location sharing disabled",
+                style: TextStyle(color: Colors.white38),
+              ),
+
             const SizedBox(height: 24),
-            Text("$seconds s",
-                style: const TextStyle(
-                    color: Colors.redAccent,
-                    fontSize: 44,
-                    fontWeight: FontWeight.w900)),
+
+            Text(
+              "$seconds s",
+              style: const TextStyle(
+                  color: Colors.redAccent,
+                  fontSize: 44,
+                  fontWeight: FontWeight.w900),
+            ),
+
             const SizedBox(height: 10),
-            const Text("Auto-sending emergency alert",
-                style: TextStyle(color: Colors.white38)),
+            const Text(
+              "Auto-sending emergency alert",
+              style: TextStyle(color: Colors.white38),
+            ),
+
             const SizedBox(height: 28),
+
             Row(children: [
               Expanded(
                 child: OutlinedButton(
-                  onPressed: cancelAlert,
+                  onPressed: _cancelAlert,
                   child: const Text("Cancel"),
                 ),
               ),

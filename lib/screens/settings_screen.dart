@@ -1,8 +1,10 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import '../services/notification_initializer.dart';
 
+import '../services/notification_initializer.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -22,6 +24,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   bool loading = true;
 
+  StreamSubscription<DocumentSnapshot>? caregiverSub;
+
   @override
   void initState() {
     super.initState();
@@ -29,25 +33,30 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   // ================================================================
-  // 🔥 LOAD SETTINGS VIA REALTIME FIRESTORE LISTENER
+  // 🔥 LOAD SETTINGS (AUTH = SOURCE OF TRUTH)
   // ================================================================
   Future<void> _loadSettings() async {
-    final prefs = await SharedPreferences.getInstance();
-    caregiverId = prefs.getString("caregiverId") ?? "";
+    final user = FirebaseAuth.instance.currentUser;
 
-    if (caregiverId.isEmpty) {
+    if (user == null) {
       setState(() => loading = false);
       return;
     }
 
-    FirebaseFirestore.instance
+    caregiverId = user.uid;
+
+    caregiverSub?.cancel();
+    caregiverSub = FirebaseFirestore.instance
         .collection("caregivers")
         .doc(caregiverId)
         .snapshots()
         .listen((doc) {
       if (!doc.exists) return;
 
-      final data = doc.data()!;
+      final data = doc.data() as Map<String, dynamic>;
+
+      if (!mounted) return;
+
       setState(() {
         caregiverName = data["name"] ?? "";
         caregiverPhone = data["phone"] ?? "";
@@ -62,7 +71,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   // ================================================================
-  // 🔥 SAVE FIRESTORE TOGGLE (MERGE)
+  // 🔥 SAVE TOGGLE (MERGE SAFE)
   // ================================================================
   Future<void> _saveToggle(String key, bool value) async {
     if (caregiverId.isEmpty) return;
@@ -74,15 +83,24 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   // ================================================================
-  // ❌ SIGN OUT — No FirebaseAuth, only clear SharedPreferences
+  // ❌ SIGN OUT (SECURE + CLEAN)
   // ================================================================
   Future<void> _signOut() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.clear();
 
+    await FirebaseAuth.instance.signOut();
+    NotificationInitializer.clearCaregiverContext();
+
     if (!mounted) return;
 
     Navigator.pushNamedAndRemoveUntil(context, "/welcome", (_) => false);
+  }
+
+  @override
+  void dispose() {
+    caregiverSub?.cancel();
+    super.dispose();
   }
 
   // ================================================================
@@ -94,7 +112,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
       return const Scaffold(
         backgroundColor: Color(0xFF0E1625),
         body: Center(
-            child: CircularProgressIndicator(color: Color(0xFF33B5FF))),
+          child: CircularProgressIndicator(color: Color(0xFF33B5FF)),
+        ),
       );
     }
 
@@ -141,11 +160,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   children: [
                     _title("Device", Icons.watch_outlined),
                     const SizedBox(height: 18),
-
                     GestureDetector(
-                      onTap: () {
-                        Navigator.pushNamed(context, "/manage-device");
-                      },
+                      onTap: () =>
+                          Navigator.pushNamed(context, "/manage-device"),
                       child: Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
@@ -159,10 +176,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                       fontSize: 15)),
                               SizedBox(height: 3),
                               Text(
-                                  "View device status &\nmanage your wearable",
-                                  style: TextStyle(
-                                      color: Colors.white54,
-                                      fontSize: 12)),
+                                "View device status &\nmanage your wearable",
+                                style: TextStyle(
+                                    color: Colors.white54, fontSize: 12),
+                              ),
                             ],
                           ),
                           Container(
@@ -194,9 +211,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    _title("Privacy & Location", Icons.location_on_rounded),
+                    _title(
+                        "Privacy & Location", Icons.location_on_rounded),
                     const SizedBox(height: 18),
-
                     _toggle(
                       title: "Location Sharing",
                       subtitle:
@@ -218,25 +235,25 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    _title("Notifications", Icons.notifications_active),
+                    _title(
+                        "Notifications", Icons.notifications_active),
                     const SizedBox(height: 18),
-
                     _toggle(
-  title: "Push Notifications",
-  subtitle: "Receive fall alerts on this device",
-  value: pushNotifications,
-  onChanged: (v) async {
-    setState(() => pushNotifications = v);
-    await _saveToggle("pushNotifications", v);
-    await NotificationInitializer.updatePushPreference(v);
-  },
-),
-
+                      title: "Push Notifications",
+                      subtitle: "Receive fall alerts on this device",
+                      value: pushNotifications,
+                      onChanged: (v) async {
+                        setState(() => pushNotifications = v);
+                        await _saveToggle("pushNotifications", v);
+                        await NotificationInitializer
+                            .updatePushPreference(v);
+                      },
+                    ),
                     const SizedBox(height: 16),
-
                     _toggle(
                       title: "Emergency Vibration",
-                      subtitle: "Vibrate when a fall alert is triggered",
+                      subtitle:
+                          "Vibrate when a fall alert is triggered",
                       value: emergencyVibration,
                       onChanged: (v) {
                         setState(() => emergencyVibration = v);
@@ -255,16 +272,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     _accountHeader(),
-
                     const SizedBox(height: 14),
-
                     _field("Name", caregiverName),
                     const SizedBox(height: 12),
                     _field("Phone Number", caregiverPhone),
-
                     const SizedBox(height: 16),
                     Container(height: 1, color: Colors.white12),
-
                     const SizedBox(height: 14),
                     Center(
                       child: GestureDetector(
@@ -288,31 +301,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ),
               ),
 
-              const SizedBox(height: 30),
-
-              // APP INFO
-              _card(
-                Column(
-                  children: const [
-                    Text(
-                      "Senra App",
-                      style: TextStyle(
-                          color: Color(0xFF33B5FF),
-                          fontSize: 16,
-                          fontWeight: FontWeight.w600),
-                    ),
-                    SizedBox(height: 6),
-                    Text("Version 1.0.0",
-                        style: TextStyle(color: Colors.white70, fontSize: 13)),
-                    SizedBox(height: 8),
-                    Text(
-                      "Your Safety, Always With You",
-                      style: TextStyle(color: Colors.white54, fontSize: 12),
-                    ),
-                  ],
-                ),
-              ),
-
               const SizedBox(height: 40),
             ],
           ),
@@ -324,7 +312,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
   // ================================================================
   // UI HELPERS
   // ================================================================
-
   Widget _card(Widget child) {
     return Container(
       width: double.infinity,
@@ -364,18 +351,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
       children: [
         Expanded(
           child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(title,
-                    style: const TextStyle(
-                        color: Colors.white,
-                        fontWeight: FontWeight.w600,
-                        fontSize: 15)),
-                const SizedBox(height: 2),
-                Text(subtitle,
-                    style:
-                        const TextStyle(color: Colors.white54, fontSize: 12)),
-              ]),
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(title,
+                  style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w600,
+                      fontSize: 15)),
+              const SizedBox(height: 2),
+              Text(subtitle,
+                  style: const TextStyle(
+                      color: Colors.white54, fontSize: 12)),
+            ],
+          ),
         ),
         Switch(
           value: value,
@@ -419,9 +407,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
             Text(
               "Account",
               style: TextStyle(
-                color: Colors.white,
-                fontSize: 16,
-                fontWeight: FontWeight.w700),
+                  color: Colors.white,
+                  fontSize: 16,
+                  fontWeight: FontWeight.w700),
             ),
           ],
         ),
@@ -430,9 +418,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
           child: const Text(
             "Edit",
             style: TextStyle(
-              color: Color(0xFF33B5FF),
-              fontWeight: FontWeight.w600,
-              fontSize: 14),
+                color: Color(0xFF33B5FF),
+                fontWeight: FontWeight.w600,
+                fontSize: 14),
           ),
         ),
       ],

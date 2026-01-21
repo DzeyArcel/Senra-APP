@@ -1,5 +1,5 @@
 // ============================================================
-// StartupRouter.dart — FINAL SENRA ROUTER (AUTH-SAFE)
+// StartupRouter.dart — FINAL SENRA ROUTER (AUTH-SAFE + DEVICE RECOVERY)
 // ============================================================
 
 import 'dart:async';
@@ -55,14 +55,14 @@ class _StartupRouterState extends State<StartupRouter> {
   }
 
   // ------------------------------------------------------------
-  // 🔐 ROUTE DECISION (AUTH FIRST – FINAL)
+  // 🔐 ROUTE DECISION (AUTH FIRST – FIXED)
   // ------------------------------------------------------------
   Future<String> _decideRoute() async {
     final prefs = await SharedPreferences.getInstance();
     final user = FirebaseAuth.instance.currentUser;
 
     final seenWelcome = prefs.getBool("seen_welcome") ?? false;
-    final pairedDevice = prefs.getString("pairedDevice") ?? "";
+    String pairedDevice = prefs.getString("pairedDevice") ?? "";
     final needsWifiSetup = prefs.getBool("needsWifiSetup") ?? true;
 
     // 1️⃣ FIRST TIME USER
@@ -70,14 +70,14 @@ class _StartupRouterState extends State<StartupRouter> {
       return "/welcome";
     }
 
-    // 2️⃣ NOT AUTHENTICATED → PHONE AUTH
+    // 2️⃣ NOT AUTHENTICATED
     if (user == null) {
       return "/phone-auth";
     }
 
     final caregiverId = user.uid;
 
-    // 3️⃣ CAREGIVER PROFILE MUST EXIST
+    // 3️⃣ CAREGIVER MUST EXIST
     final cgSnap = await FirebaseFirestore.instance
         .collection("caregivers")
         .doc(caregiverId)
@@ -87,10 +87,25 @@ class _StartupRouterState extends State<StartupRouter> {
       return "/caregiver-info";
     }
 
-    // 4️⃣ NO DEVICE → PAIRING
+    final cgData = cgSnap.data() ?? <String, dynamic>{};
+
+
+    // ------------------------------------------------------------
+    // 🔁 DEVICE RECOVERY FROM FIRESTORE (KEY FIX)
+    // ------------------------------------------------------------
     if (pairedDevice.isEmpty) {
-      await prefs.setBool("needsWifiSetup", true);
-      return "/device-pairing";
+      final devices =
+          (cgData["devices"] as List?)?.map((e) => e.toString()).toList() ?? [];
+
+      if (devices.isNotEmpty) {
+        pairedDevice = devices.first;
+
+        await prefs.setString("pairedDevice", pairedDevice);
+        await prefs.setBool("needsWifiSetup", false);
+      } else {
+        await prefs.setBool("needsWifiSetup", true);
+        return "/device-pairing";
+      }
     }
 
     // 5️⃣ WIFI NOT FINISHED
@@ -110,8 +125,8 @@ class _StartupRouterState extends State<StartupRouter> {
     return "/connecting-senra";
   }
 
-  // ------------------------------------------------------------
-  // 🔔 ALERT LISTENER
+    // ------------------------------------------------------------
+  // 🔔 ALERT LISTENER (PATCHED FOR ALERTSCREEN v2)
   // ------------------------------------------------------------
   Future<void> _listenForAlerts() async {
     final prefs = await SharedPreferences.getInstance();
@@ -119,13 +134,13 @@ class _StartupRouterState extends State<StartupRouter> {
 
     if (user == null) return;
 
-    final caregiverId = user.uid;
     final pairedDevice = prefs.getString("pairedDevice") ?? "";
     final needsWifiSetup = prefs.getBool("needsWifiSetup") ?? true;
 
     if (pairedDevice.isEmpty || needsWifiSetup) return;
 
-    await NotificationInitializer.init(caregiverId: caregiverId);
+    // 🔔 init notifications
+    await NotificationInitializer.init(caregiverId: user.uid);
 
     final watchDevice = cleanId(pairedDevice);
 
@@ -133,7 +148,7 @@ class _StartupRouterState extends State<StartupRouter> {
         .collection("alerts")
         .snapshots()
         .listen((snap) async {
-      if (snap.docs.isEmpty) return;
+      if (snap.docs.isEmpty || alertOpened) return;
 
       final sorted = List<QueryDocumentSnapshot>.from(snap.docs)
         ..sort((a, b) {
@@ -157,6 +172,7 @@ class _StartupRouterState extends State<StartupRouter> {
         final data = doc.data() as Map<String, dynamic>;
 
         if (cleanId(data["deviceId"]) != watchDevice) continue;
+        if (data["delivered"] == true) continue;
 
         DateTime ts = (data["timestamp"] is Timestamp)
             ? data["timestamp"].toDate()
@@ -164,9 +180,19 @@ class _StartupRouterState extends State<StartupRouter> {
                 DateTime(2000);
 
         if (DateTime.now().difference(ts).inSeconds > 120) continue;
-        if (data["delivered"] == true) continue;
 
-        if (alertOpened) return;
+        // 🔥 LOAD CAREGIVER PREFS ONCE
+        final caregiverSnap = await FirebaseFirestore.instance
+            .collection("caregivers")
+            .doc(user.uid)
+            .get();
+
+        final caregiver = caregiverSnap.data() ?? {};
+
+        final vibrate = caregiver["emergencyVibration"] ?? true;
+        final playSound = caregiver["pushNotifications"] ?? true;
+        final showLocation = caregiver["locationSharing"] ?? true;
+
         alertOpened = true;
 
         if (!routed && mounted) {
@@ -177,10 +203,18 @@ class _StartupRouterState extends State<StartupRouter> {
             arguments: {
               "alertId": doc.id,
               "deviceId": watchDevice,
+              "fallType": data["fallType"] ?? "Fall Detected",
+
+              // 🔥 DECISIONS
+              "vibrate": vibrate,
+              "playSound": playSound,
+              "showLocation": showLocation,
+
+              // 🔥 LOCATION (ONLY DATA)
               "lat": data["lat"],
               "lng": data["lng"],
-              "mapURL": data["mapURL"],
-              "fallType": data["fallType"] ?? "Fall Detected",
+              "locationLabel": data["location"] ?? "",
+              "startSeconds": 30,
             },
           );
         }
@@ -195,6 +229,7 @@ class _StartupRouterState extends State<StartupRouter> {
     });
   }
 
+
   // ------------------------------------------------------------
   @override
   void initState() {
@@ -204,14 +239,14 @@ class _StartupRouterState extends State<StartupRouter> {
       await Future.delayed(const Duration(milliseconds: 300));
       if (!mounted) return;
 
-      _listenForAlerts();
-
       final route = await _decideRoute();
 
       if (!routed && mounted && !alertOpened) {
         routed = true;
         Navigator.pushReplacementNamed(context, route);
       }
+
+      _listenForAlerts(); // AFTER routing
     });
   }
 

@@ -1,13 +1,14 @@
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
-import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/foundation.dart';
-
+import 'package:firebase_auth/firebase_auth.dart';
 
 import '../main.dart';
+
 
 class NotificationInitializer {
   static final FlutterLocalNotificationsPlugin _plugin =
@@ -15,6 +16,8 @@ class NotificationInitializer {
 
   static bool _initialized = false;
   static String _currentCaregiverId = "";
+
+  static const String _channelId = 'senra_alerts_v2';
 
   // ============================================================
   // 🔔 GLOBAL INIT
@@ -33,23 +36,18 @@ class NotificationInitializer {
 
       await _plugin.initialize(
         initSettings,
-        onDidReceiveNotificationResponse: (details) {
-          final alertId = details.payload;
-          if (alertId != null && alertId.isNotEmpty) {
-            navigatorKey.currentState?.pushNamed(
-              '/alert',
-              arguments: {'alertId': alertId},
-            );
-          }
-        },
+        onDidReceiveNotificationResponse: _onNotificationTap,
       );
 
-      // 🔔 ANDROID 8+ NOTIFICATION CHANNEL (REQUIRED)
-      const AndroidNotificationChannel channel = AndroidNotificationChannel(
-        'senra_alerts',
+      final AndroidNotificationChannel channel = AndroidNotificationChannel(
+        _channelId,
         'Senra Emergency Alerts',
         description: 'Critical fall and emergency alerts from Senra',
         importance: Importance.max,
+        enableVibration: true,
+        vibrationPattern:
+            Int64List.fromList([0, 1000, 500, 1000, 500, 1000]),
+        playSound: true,
       );
 
       await _plugin
@@ -58,7 +56,6 @@ class NotificationInitializer {
           ?.createNotificationChannel(channel);
     }
 
-    // 🔐 ANDROID 13+ PERMISSION
     await FirebaseMessaging.instance.requestPermission(
       alert: true,
       badge: true,
@@ -66,53 +63,112 @@ class NotificationInitializer {
     );
 
     await _registerToken();
+
     _listenForeground();
     _listenBackgroundTap();
-    _listenKilledTap();
+    await _listenKilledTap();
   }
 
   // ============================================================
-  // 🧠 BACKGROUND HANDLER (SYSTEM HANDLES NOTIFICATION)
+  // 🔔 NOTIFICATION TAP (ALL STATES)
   // ============================================================
-  @pragma('vm:entry-point')
-  static Future<void> handleBackground(RemoteMessage message) async {
-    await Firebase.initializeApp();
-    // ❗ DO NOTHING HERE
-    // Android system displays the notification automatically
+  static Future<void> _onNotificationTap(
+      NotificationResponse response) async {
+    final alertId = response.payload;
+    if (alertId == null || alertId.isEmpty) return;
+
+    await _navigateToAlertFromId(alertId);
   }
 
-  // ============================================================
-  // 🔄 TOKEN REGISTRATION (CRITICAL FIX HERE)
-  // ============================================================
-  static Future<void> _registerToken() async {
-    final token = await FirebaseMessaging.instance.getToken();
+  static void _listenBackgroundTap() {
+    FirebaseMessaging.onMessageOpenedApp.listen((message) async {
+      final alertId = message.data['alertId'];
+      if (alertId == null) return;
 
-    if (token == null) {
-      debugPrint("❌ FCM token is null");
-      return;
-    }
-
-    debugPrint("📲 FCM TOKEN RECEIVED: $token");
-
-    await _saveToken(token);
-
-    FirebaseMessaging.instance.onTokenRefresh.listen((newToken) async {
-      debugPrint("🔄 FCM TOKEN REFRESHED: $newToken");
-      await _saveToken(newToken);
+      await _navigateToAlertFromId(alertId);
     });
   }
 
-  static Future<void> _saveToken(String token) async {
-    if (_currentCaregiverId.isEmpty) {
-      debugPrint("❌ caregiverId empty, cannot save FCM token");
-      return;
+  static Future<void> _listenKilledTap() async {
+    final msg = await FirebaseMessaging.instance.getInitialMessage();
+    if (msg != null && msg.data['alertId'] != null) {
+      await _navigateToAlertFromId(msg.data['alertId']);
     }
+  }
 
-    debugPrint("✅ Saving FCM token for caregiver: $_currentCaregiverId");
+  // ============================================================
+  // 🧠 CENTRAL ALERT NAVIGATION (KEY FIX)
+  // ============================================================
+  static Future<void> _navigateToAlertFromId(String alertId) async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return;
+
+    // 🔥 LOAD ALERT
+    final alertSnap = await FirebaseFirestore.instance
+        .collection('alerts')
+        .doc(alertId)
+        .get();
+
+    if (!alertSnap.exists) return;
+
+    final alert = alertSnap.data()!;
+    final deviceId = alert['deviceId'];
+    if (deviceId == null) return;
+
+    // 🔥 LOAD CAREGIVER PREFS
+    final caregiverSnap = await FirebaseFirestore.instance
+        .collection('caregivers')
+        .doc(user.uid)
+        .get();
+
+    final caregiver = caregiverSnap.data() ?? {};
+
+    final vibrate = caregiver['emergencyVibration'] ?? true;
+    final playSound = caregiver['pushNotifications'] ?? true;
+    final showLocation = caregiver['locationSharing'] ?? true;
+
+    navigatorKey.currentState?.pushReplacementNamed(
+      '/alert',
+      arguments: {
+        'alertId': alertId,
+        'deviceId': deviceId,
+        'fallType': alert['fallType'] ?? 'Fall Detected',
+
+        // 🔥 DECISIONS
+        'vibrate': vibrate,
+        'playSound': playSound,
+        'showLocation': showLocation,
+
+        // 🔥 LOCATION
+        'lat': alert['lat'],
+        'lng': alert['lng'],
+        'locationLabel': alert['location'] ?? '',
+        'startSeconds': 30,
+      },
+    );
+  }
+
+  // ============================================================
+  // 🔄 TOKEN REGISTRATION
+  // ============================================================
+  static Future<void> _registerToken() async {
+    final token = await FirebaseMessaging.instance.getToken();
+    if (token == null) return;
+    await _saveToken(token);
+
+    FirebaseMessaging.instance.onTokenRefresh.listen(_saveToken);
+  }
+
+  static Future<void> _saveToken(String token) async {
+    final user = FirebaseAuth.instance.currentUser;
+    final caregiverId =
+        _currentCaregiverId.isNotEmpty ? _currentCaregiverId : user?.uid;
+
+    if (caregiverId == null) return;
 
     await FirebaseFirestore.instance
         .collection('caregivers')
-        .doc(_currentCaregiverId)
+        .doc(caregiverId)
         .set({
       'fcmToken': token,
       'fcmPlatform': Platform.isAndroid ? 'android' : 'ios',
@@ -121,82 +177,47 @@ class NotificationInitializer {
   }
 
   // ============================================================
-  // 📩 FOREGROUND LISTENER (APP OPEN)
+  // 📩 FOREGROUND NOTIFICATION
   // ============================================================
   static void _listenForeground() {
-    FirebaseMessaging.onMessage.listen((message) {
-      showForegroundNotification(message);
-    });
+    FirebaseMessaging.onMessage.listen(showForegroundNotification);
   }
 
-  // ============================================================
-  // 📬 BACKGROUND TAP (APP IN BACKGROUND)
-  // ============================================================
-  static void _listenBackgroundTap() {
-    FirebaseMessaging.onMessageOpenedApp.listen((message) {
-      navigatorKey.currentState?.pushNamed(
-        '/alert',
-        arguments: message.data,
-      );
-    });
-  }
-
-  // ============================================================
-  // 🧨 KILLED TAP (APP TERMINATED)
-  // ============================================================
-  static Future<void> _listenKilledTap() async {
-    final msg = await FirebaseMessaging.instance.getInitialMessage();
-    if (msg != null) {
-      navigatorKey.currentState?.pushNamed(
-        '/alert',
-        arguments: msg.data,
-      );
-    }
-  }
-
-  // ============================================================
-  // 🔔 FOREGROUND NOTIFICATION DISPLAY
-  // ============================================================
   static Future<void> showForegroundNotification(
       RemoteMessage message) async {
-    const AndroidNotificationDetails androidDetails =
+    final AndroidNotificationDetails androidDetails =
         AndroidNotificationDetails(
-      'senra_alerts',
+      _channelId,
       'Senra Emergency Alerts',
-      channelDescription: 'Fall and emergency alerts',
       importance: Importance.max,
       priority: Priority.high,
       playSound: true,
+      enableVibration: true,
     );
-
-    const NotificationDetails details =
-        NotificationDetails(android: androidDetails);
-
-    final title = message.notification?.title ?? '🚨 Fall Detected';
-    final body =
-        message.notification?.body ?? 'Immediate attention required';
 
     await _plugin.show(
       DateTime.now().millisecondsSinceEpoch ~/ 1000,
-      title,
-      body,
-      details,
+      message.notification?.title ?? '🚨 Fall Detected',
+      message.notification?.body ?? 'Immediate attention required',
+      NotificationDetails(android: androidDetails),
       payload: message.data['alertId']?.toString(),
     );
   }
 
   // ============================================================
-  // ⚙ PUSH NOTIFICATION USER PREFERENCE
+  // ⚙ PUSH TOGGLE
   // ============================================================
   static Future<void> updatePushPreference(bool enabled) async {
-    if (_currentCaregiverId.isEmpty) return;
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return;
 
     await FirebaseFirestore.instance
         .collection('caregivers')
-        .doc(_currentCaregiverId)
-        .set({
-      'pushNotifications': enabled,
-      'pushUpdatedAt': FieldValue.serverTimestamp(),
-    }, SetOptions(merge: true));
+        .doc(user.uid)
+        .set({'pushNotifications': enabled}, SetOptions(merge: true));
+  }
+
+  static void clearCaregiverContext() {
+    _currentCaregiverId = "";
   }
 }

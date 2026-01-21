@@ -7,10 +7,12 @@ class HelpNotifiedScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     // SAFE ARGUMENTS
-    final args = ModalRoute.of(context)?.settings.arguments as Map<String, dynamic>?;
+    final args =
+        ModalRoute.of(context)?.settings.arguments as Map<String, dynamic>?;
 
-    final String location = args?["location"] ?? "Unknown";
+    final String location = args?["location"] ?? "Unknown location";
     final String sentTime = args?["sentTime"] ?? "Just now";
+
     final List<Map<String, String>> contacts =
         (args?["contacts"] as List<dynamic>? ?? [])
             .map((e) => Map<String, String>.from(e))
@@ -56,7 +58,7 @@ class HelpNotifiedScreen extends StatelessWidget {
 
               // TITLE
               const Text(
-                "Help Has Been Notified",
+                "Emergency Alert Dispatched",
                 style: TextStyle(
                   color: Colors.white,
                   fontSize: 20,
@@ -64,10 +66,11 @@ class HelpNotifiedScreen extends StatelessWidget {
                 ),
               ),
 
-              const SizedBox(height: 6),
+              const SizedBox(height: 8),
 
               const Text(
-                "Your emergency contacts have been\nnotified and the location has been shared.",
+                "Your emergency alert has been sent.\n"
+                "Delivery may take a few moments depending on network signal.",
                 textAlign: TextAlign.center,
                 style: TextStyle(
                   color: Colors.white70,
@@ -81,10 +84,11 @@ class HelpNotifiedScreen extends StatelessWidget {
               // SENT TIME
               Row(
                 children: [
-                  const Icon(Icons.access_time, color: Colors.white54, size: 18),
+                  const Icon(Icons.access_time,
+                      color: Colors.white54, size: 18),
                   const SizedBox(width: 10),
                   Text(
-                    "Sent at: $sentTime",
+                    "Dispatched at: $sentTime",
                     style: const TextStyle(
                       color: Colors.white70,
                       fontSize: 13,
@@ -98,7 +102,8 @@ class HelpNotifiedScreen extends StatelessWidget {
               // LOCATION
               Row(
                 children: [
-                  const Icon(Icons.location_on, color: Colors.white54, size: 18),
+                  const Icon(Icons.location_on,
+                      color: Colors.white54, size: 18),
                   const SizedBox(width: 10),
                   Expanded(
                     child: Text(
@@ -114,11 +119,11 @@ class HelpNotifiedScreen extends StatelessWidget {
 
               const SizedBox(height: 28),
 
-              // CONTACTS NOTIFIED TITLE
+              // CONTACTS TITLE
               const Align(
                 alignment: Alignment.centerLeft,
                 child: Text(
-                  "Contacts Notified:",
+                  "Contacts Being Notified:",
                   style: TextStyle(
                     color: Colors.white70,
                     fontSize: 13,
@@ -141,7 +146,8 @@ class HelpNotifiedScreen extends StatelessWidget {
                   ),
                   child: Row(
                     children: [
-                      const Icon(Icons.phone, color: Color(0xFF4FC3F7), size: 18),
+                      const Icon(Icons.phone,
+                          color: Color(0xFF4FC3F7), size: 18),
                       const SizedBox(width: 14),
 
                       // NAME + NUMBER
@@ -169,12 +175,12 @@ class HelpNotifiedScreen extends StatelessWidget {
                         ),
                       ),
 
-                      // SENT LABEL
+                      // STATUS
                       const Text(
-                        "✓ Sent",
+                        "⏳ Sending",
                         style: TextStyle(
                           color: Color(0xFF4FC3F7),
-                          fontWeight: FontWeight.w800,
+                          fontWeight: FontWeight.w700,
                           fontSize: 13,
                         ),
                       ),
@@ -182,6 +188,20 @@ class HelpNotifiedScreen extends StatelessWidget {
                   ),
                 );
               }).toList(),
+
+              const SizedBox(height: 12),
+
+              // FOOTNOTE
+              const Text(
+                "SMS delivery depends on network signal.\n"
+                "If delivery is delayed, the system will retry automatically.",
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: Colors.white38,
+                  fontSize: 11,
+                  height: 1.4,
+                ),
+              ),
 
               const SizedBox(height: 22),
 

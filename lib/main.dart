@@ -100,18 +100,22 @@ class SenraApp extends StatelessWidget {
           case '/alert':
             final args = settings.arguments as Map<String, dynamic>? ?? {};
             return MaterialPageRoute(
-              builder: (_) => AlertScreen(
-                alertId: args['alertId'],
-                deviceId: args['deviceId'],
-                location: args['location'] ?? 'Unknown location',
-                lat: (args['lat'] ?? 0.0).toDouble(),
-                lng: (args['lng'] ?? 0.0).toDouble(),
-                mapURL: args['mapURL'] ?? '',
-                fallType: args['fallType'] ?? 'Fall Detected',
-                contacts:
-                    (args['contacts'] ?? []).cast<Map<String, String>>(),
-                startSeconds: args['startSeconds'] ?? 8,
-              ),
+   builder: (_) => AlertScreen(
+  alertId: args['alertId'],
+  deviceId: args['deviceId'],
+  fallType: args['fallType'] ?? 'Fall Detected',
+
+  // 🔥 DECISIONS PASSED IN
+  vibrate: args['vibrate'] ?? true,
+  playSound: args['playSound'] ?? true,
+  showLocation: args['showLocation'] ?? true,
+
+  lat: args['lat'] != null ? double.tryParse(args['lat'].toString()) : null,
+  lng: args['lng'] != null ? double.tryParse(args['lng'].toString()) : null,
+  locationLabel: args['locationLabel'] ?? '',
+  startSeconds: args['startSeconds'] ?? 30,
+),
+
             );
 
           case '/help-notified':
