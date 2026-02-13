@@ -74,21 +74,24 @@ class _CaregiverInfoScreenState extends State<CaregiverInfoScreen> {
       // ---------------------------------------------------------
       // CREATE / UPDATE CAREGIVER PROFILE
       // ---------------------------------------------------------
-      await firestore.collection("caregivers").doc(uid).set({
-        "name": name,
-        "phone": user.phoneNumber ?? "",
-        "pairedDevice": "",
-        "locationSharing": true,
-        "pushNotifications": true,
-        "smsNotifications": true,
+await firestore.collection("caregivers").doc(uid).set({
+  "name": name,
+  "phone": user.phoneNumber ?? "",
+  "locationSharing": true,
+  "pushNotifications": true,
+  "smsNotifications": true,
 
-        // emergency (duplicate for quick access)
-        "emergencyName": emergencyName1.text.trim(),
-        "emergencyPhone": emergencyPhone,
+  // 🔔 ensure push never disabled
+  "fcmHeal": true,
 
-        "updated_at": FieldValue.serverTimestamp(),
-        "created_at": FieldValue.serverTimestamp(),
-      }, SetOptions(merge: true));
+  // emergency (duplicate for quick access)
+  "emergencyName": emergencyName1.text.trim(),
+  "emergencyPhone": emergencyPhone,
+
+  "updatedAt": FieldValue.serverTimestamp(),
+}, SetOptions(merge: true));
+
+
 
       // emergency contact subcollection
       await firestore

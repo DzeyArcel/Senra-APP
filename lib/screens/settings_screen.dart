@@ -35,40 +35,56 @@ class _SettingsScreenState extends State<SettingsScreen> {
   // ================================================================
   // 🔥 LOAD SETTINGS (AUTH = SOURCE OF TRUTH)
   // ================================================================
-  Future<void> _loadSettings() async {
-    final user = FirebaseAuth.instance.currentUser;
+ Future<void> _loadSettings() async {
+  final user = FirebaseAuth.instance.currentUser;
 
-    if (user == null) {
-      setState(() => loading = false);
-      return;
-    }
-
-    caregiverId = user.uid;
-
-    caregiverSub?.cancel();
-    caregiverSub = FirebaseFirestore.instance
-        .collection("caregivers")
-        .doc(caregiverId)
-        .snapshots()
-        .listen((doc) {
-      if (!doc.exists) return;
-
-      final data = doc.data() as Map<String, dynamic>;
-
-      if (!mounted) return;
-
-      setState(() {
-        caregiverName = data["name"] ?? "";
-        caregiverPhone = data["phone"] ?? "";
-
-        locationSharing = data["locationSharing"] ?? true;
-        pushNotifications = data["pushNotifications"] ?? true;
-        emergencyVibration = data["emergencyVibration"] ?? true;
-
-        loading = false;
-      });
-    });
+  if (user == null) {
+    if (mounted) setState(() => loading = false);
+    return;
   }
+
+  caregiverId = user.uid;
+
+  caregiverSub?.cancel();
+  caregiverSub = FirebaseFirestore.instance
+      .collection("caregivers")
+      .doc(caregiverId)
+      .snapshots()
+      .listen((doc) {
+    if (!doc.exists) return;
+
+    final data = doc.data() as Map<String, dynamic>;
+
+    if (!mounted) return;
+
+    final String name =
+        (data["name"] != null && data["name"].toString().trim().isNotEmpty)
+            ? data["name"].toString().trim()
+            : "Not set";
+
+    setState(() {
+      // 🔥 ACCOUNT INFO
+      caregiverName = name;
+      caregiverPhone = data["phone"] ?? "";
+
+      // 🔥 SETTINGS (SAFE DEFAULTS)
+      locationSharing = data["locationSharing"] ?? true;
+      pushNotifications = data["pushNotifications"] ?? true;
+      emergencyVibration = data["emergencyVibration"] ?? true;
+
+      loading = false;
+    });
+
+    // 🔒 OPTIONAL: force user to set name once (recommended)
+    if (name == "Not set") {
+      Future.microtask(() {
+        if (!mounted) return;
+        Navigator.pushReplacementNamed(context, "/caregiver-info");
+      });
+    }
+  });
+}
+
 
   // ================================================================
   // 🔥 SAVE TOGGLE (MERGE SAFE)
@@ -79,7 +95,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
     await FirebaseFirestore.instance
         .collection("caregivers")
         .doc(caregiverId)
-        .set({key: value}, SetOptions(merge: true));
+        .set({
+  key: value,
+  "updatedAt": FieldValue.serverTimestamp(),
+}, SetOptions(merge: true));
+
   }
 
   // ================================================================
@@ -90,7 +110,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
     await prefs.clear();
 
     await FirebaseAuth.instance.signOut();
-    NotificationInitializer.clearCaregiverContext();
 
     if (!mounted) return;
 
@@ -231,38 +250,52 @@ class _SettingsScreenState extends State<SettingsScreen> {
               const SizedBox(height: 20),
 
               // NOTIFICATIONS
-              _card(
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    _title(
-                        "Notifications", Icons.notifications_active),
-                    const SizedBox(height: 18),
-                    _toggle(
-                      title: "Push Notifications",
-                      subtitle: "Receive fall alerts on this device",
-                      value: pushNotifications,
-                      onChanged: (v) async {
-                        setState(() => pushNotifications = v);
-                        await _saveToggle("pushNotifications", v);
-                        await NotificationInitializer
-                            .updatePushPreference(v);
-                      },
-                    ),
-                    const SizedBox(height: 16),
-                    _toggle(
-                      title: "Emergency Vibration",
-                      subtitle:
-                          "Vibrate when a fall alert is triggered",
-                      value: emergencyVibration,
-                      onChanged: (v) {
-                        setState(() => emergencyVibration = v);
-                        _saveToggle("emergencyVibration", v);
-                      },
-                    ),
-                  ],
-                ),
-              ),
+     _card(
+  Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      _title("Notifications", Icons.notifications_active),
+      const SizedBox(height: 18),
+
+      // 🔔 PUSH NOTIFICATIONS
+      _toggle(
+        title: "Push Notifications",
+        subtitle: "Receive fall alerts on this device",
+        value: pushNotifications,
+        onChanged: (v) async {
+          setState(() => pushNotifications = v);
+
+          // 🔥 Single source of truth
+          await NotificationInitializer.updatePushPreference(v);
+        },
+      ),
+
+      const SizedBox(height: 16),
+
+      // 📳 EMERGENCY VIBRATION
+      _toggle(
+        title: "Emergency Vibration",
+        subtitle: "Vibrate when a fall alert is triggered",
+        value: emergencyVibration,
+        onChanged: (v) {
+          setState(() => emergencyVibration = v);
+          _saveToggle("emergencyVibration", v);
+        },
+      ),
+
+      // 🧠 ANDROID LIMITATION EXPLANATION (FIX B)
+      const SizedBox(height: 8),
+      const Text(
+        "Background vibration is controlled by your phone’s notification settings.",
+        style: TextStyle(
+          color: Colors.white38,
+          fontSize: 11,
+        ),
+      ),
+    ],
+  ),
+),
+
 
               const SizedBox(height: 20),
 

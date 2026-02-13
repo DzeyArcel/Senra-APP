@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 
 import 'firebase_options.dart';
 import 'startup_router.dart';
@@ -13,7 +15,7 @@ import 'services/notification_channel.dart';
 
 // Screens
 import 'screens/welcome_screen.dart';
-import 'screens/phone_auth_screen.dart'; // ✅ ADDED
+import 'screens/phone_auth_screen.dart';
 import 'screens/caregiver_info_screen.dart';
 import 'screens/device_pairing_screen.dart';
 import 'screens/device_found_screen.dart';
@@ -31,6 +33,8 @@ import 'screens/location_tracking_screen.dart';
 import 'screens/activity_history_screen.dart';
 import 'screens/alert_screen.dart';
 import 'screens/help_notified_screen.dart';
+import 'screens/waiting_for_ap_screen.dart';
+
 
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 
@@ -62,23 +66,45 @@ Future<void> main() async {
     sound: true,
   );
 
-  // 🔔 FOREGROUND LISTENER (LOG ONLY)
-  FirebaseMessaging.onMessage.listen((RemoteMessage message) {
-    debugPrint("📲 FOREGROUND MESSAGE: ${message.notification?.title}");
-  });
+  // ============================================================
+  // 🔥 FCM TOKEN REGISTER & REFRESH (CRITICAL — SAFE)
+  // ============================================================
+  final messaging = FirebaseMessaging.instance;
 
-  // 🔔 APP OPENED FROM BACKGROUND
-  FirebaseMessaging.onMessageOpenedApp.listen((RemoteMessage message) {
-    debugPrint("📲 OPENED FROM BACKGROUND");
-  });
+  // Get current token
+  final token = await messaging.getToken();
+  debugPrint("📲 FCM TOKEN: $token");
 
-  // 🔔 APP OPENED FROM KILLED STATE
-  final RemoteMessage? initialMessage =
-      await FirebaseMessaging.instance.getInitialMessage();
+  if (token != null) {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user != null) {
+      await FirebaseFirestore.instance
+          .collection("caregivers")
+          .doc(user.uid)
+          .update({
+        "fcmToken": token,
+      });
 
-  if (initialMessage != null) {
-    debugPrint("📲 OPENED FROM KILLED STATE");
+      debugPrint("✅ FCM token saved");
+    }
   }
+
+  // Listen for token refresh
+  FirebaseMessaging.instance.onTokenRefresh.listen((newToken) async {
+    debugPrint("🔁 FCM token refreshed: $newToken");
+
+    final user = FirebaseAuth.instance.currentUser;
+    if (user != null) {
+      await FirebaseFirestore.instance
+          .collection("caregivers")
+          .doc(user.uid)
+          .update({
+        "fcmToken": newToken,
+      });
+
+      debugPrint("✅ Refreshed token saved");
+    }
+  });
 
   runApp(const SenraApp());
 }
@@ -92,41 +118,8 @@ class SenraApp extends StatelessWidget {
       navigatorKey: navigatorKey,
       debugShowCheckedModeBanner: false,
 
-      // ============================================================
-      // DYNAMIC ROUTES
-      // ============================================================
-      onGenerateRoute: (settings) {
-        switch (settings.name) {
-          case '/alert':
-            final args = settings.arguments as Map<String, dynamic>? ?? {};
-            return MaterialPageRoute(
-   builder: (_) => AlertScreen(
-  alertId: args['alertId'],
-  deviceId: args['deviceId'],
-  fallType: args['fallType'] ?? 'Fall Detected',
-
-  // 🔥 DECISIONS PASSED IN
-  vibrate: args['vibrate'] ?? true,
-  playSound: args['playSound'] ?? true,
-  showLocation: args['showLocation'] ?? true,
-
-  lat: args['lat'] != null ? double.tryParse(args['lat'].toString()) : null,
-  lng: args['lng'] != null ? double.tryParse(args['lng'].toString()) : null,
-  locationLabel: args['locationLabel'] ?? '',
-  startSeconds: args['startSeconds'] ?? 30,
-),
-
-            );
-
-          case '/help-notified':
-            return MaterialPageRoute(
-              builder: (_) => const HelpNotifiedScreen(),
-            );
-
-          default:
-            return null;
-        }
-      },
+      // 🔥 StartupRouter runs ONCE
+      initialRoute: '/startup',
 
       // ============================================================
       // STATIC ROUTES
@@ -134,11 +127,7 @@ class SenraApp extends StatelessWidget {
       routes: {
         '/startup': (_) => const StartupRouter(),
         '/welcome': (_) => const WelcomeScreen(),
-
-        // 🔐 AUTH (NEW)
         '/phone-auth': (_) => const PhoneAuthScreen(),
-
-        // 👤 PROFILE
         '/caregiver-info': (_) => const CaregiverInfoScreen(),
 
         // 🔗 DEVICE FLOW
@@ -146,6 +135,7 @@ class SenraApp extends StatelessWidget {
         '/device-found': (_) => const DeviceFoundScreen(),
         '/device-connected': (_) => const DeviceConnectedScreen(),
         '/connecting-senra': (_) => const ConnectingToSenraScreen(),
+        '/waiting-ap': (_) => const WaitingForAP(),
         '/wifi-config': (_) => const WifiConfigScreen(),
         '/all-set': (_) => const AllSetScreen(),
 
@@ -160,7 +150,40 @@ class SenraApp extends StatelessWidget {
         '/edit-contact': (_) => const EditContactScreen(),
       },
 
-      home: const StartupRouter(),
+      // ============================================================
+      // DYNAMIC ROUTES (ALERTS)
+      // ============================================================
+      onGenerateRoute: (settings) {
+        if (settings.name == '/alert') {
+          final args = settings.arguments as Map<String, dynamic>? ?? {};
+          return MaterialPageRoute(
+            builder: (_) => AlertScreen(
+              alertId: args['alertId'],
+              deviceId: args['deviceId'],
+              fallType: args['fallType'] ?? 'Fall Detected',
+              vibrate: args['vibrate'] ?? true,
+              playSound: args['playSound'] ?? true,
+              showLocation: args['showLocation'] ?? true,
+              lat: args['lat'] != null
+                  ? double.tryParse(args['lat'].toString())
+                  : null,
+              lng: args['lng'] != null
+                  ? double.tryParse(args['lng'].toString())
+                  : null,
+              locationLabel: args['locationLabel'] ?? '',
+              startSeconds: args['startSeconds'] ?? 30,
+            ),
+          );
+        }
+
+        if (settings.name == '/help-notified') {
+          return MaterialPageRoute(
+            builder: (_) => const HelpNotifiedScreen(),
+          );
+        }
+
+        return null;
+      },
     );
   }
 }

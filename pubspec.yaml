@@ -42,6 +42,9 @@ dependencies:
   
   flutter_map: ^6.1.0
   latlong2: ^0.9.1
+  webview_flutter: ^4.13.1
+
+
 
 
 dev_dependencies:
@@ -50,15 +53,21 @@ dev_dependencies:
   flutter_lints: ^5.0.0
   flutter_launcher_icons: ^0.13.1
   change_app_package_name: ^1.5.0
+  flutter_native_splash: ^2.3.2
 
 
 flutter_icons:
   android: true
   ios: true
-  image_path: "assets/logo.png"
+  image_path: "assets/icon/senra_icon.png"
 
 flutter:
   uses-material-design: true
   assets:
-    - assets/logo.png
+    - assets/icon/senra_icon.png
     - assets/sounds/alert.wav
+
+flutter_native_splash:
+  color: "#0E1625"
+  image: assets/icon/senra_icon.png
+

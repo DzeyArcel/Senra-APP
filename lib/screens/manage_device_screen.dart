@@ -2,8 +2,9 @@
 // ManageDeviceScreen.dart — FINAL ECOSYSTEM VERSION
 // - Auth-safe (FirebaseAuth UID)
 // - Unlink device safe
-// - Change Wi-Fi password (reset_wifi)
+// - Change Wi-Fi password (wifiReset command)
 // - StartupRouter aligned
+// - Command is ONE-SHOT (no loops)
 // ============================================================
 
 import 'package:flutter/material.dart';
@@ -94,54 +95,35 @@ class _ManageDeviceScreenState extends State<ManageDeviceScreen> {
   }
 
   // ==========================================================
-  // 📶 CHANGE WI-FI PASSWORD (RESET FLOW)
+  // 📶 CHANGE WI-FI PASSWORD (RESET FLOW — ONE SHOT)
   // ==========================================================
-  Future<void> _changeWifi() async {
-    if (deviceId == null) return;
+ Future<void> _changeWifi() async {
+  if (deviceId == null) return;
 
-    final prefs = await SharedPreferences.getInstance();
-
-    // Force Wi-Fi setup route
-    await prefs.setBool("needsWifiSetup", true);
-
-    // Loading overlay
-    if (mounted) {
-      showDialog(
-        context: context,
-        barrierDismissible: false,
-        builder: (_) => const Center(
-          child: CircularProgressIndicator(color: Colors.white),
-        ),
-      );
-    }
-
-    try {
-      // 🔥 ONLY FIELD FIRMWARE LISTENS TO
-      await FirebaseFirestore.instance
-          .collection("devices")
-          .doc(deviceId)
-          .update({
-        "adminCommand": "reset_wifi",
+  await FirebaseFirestore.instance
+      .collection("devices")
+      .doc(deviceId)
+      .update({
+        "wifiReset": true,
+        "wifiResetAck": false, // ensure clean command
       });
 
-      await Future.delayed(const Duration(milliseconds: 500));
+  if (!mounted) return;
 
-      if (!mounted) return;
-      Navigator.pop(context);
+  // ⏳ Show loading screen first
+  Navigator.pushNamed(context, "/waiting-ap");
 
-      Navigator.pushNamed(context, "/wifi-config");
-    } catch (e) {
-      if (!mounted) return;
-      Navigator.pop(context);
+  // ⏱ Wait for ESP to reboot into AP
+  await Future.delayed(const Duration(seconds: 12));
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text("Failed to reset Wi-Fi: $e"),
-          backgroundColor: Colors.redAccent,
-        ),
-      );
-    }
-  }
+  if (!mounted) return;
+
+  // 🌐 Now go to Wi-Fi setup screen
+  Navigator.pushReplacementNamed(context, "/wifi-config");
+}
+
+
+
 
   // ==========================================================
   // TIME FORMATTER

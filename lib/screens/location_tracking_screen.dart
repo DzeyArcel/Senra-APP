@@ -209,36 +209,64 @@ class _LocationTrackingScreenState extends State<LocationTrackingScreen> {
                   child: ClipRRect(
                     borderRadius: BorderRadius.circular(14),
                     child: allowLocation && hasGps
-                        ? FlutterMap(
-                            options: MapOptions(
-                              initialCenter: LatLng(lat!, lng!),
-                              initialZoom: 16,
-                              interactionOptions:
-                                  const InteractionOptions(flags: InteractiveFlag.none),
-                            ),
-                            children: [
-                              TileLayer(
-                                urlTemplate:
-                                    "https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
-                                userAgentPackageName: "com.senra.app",
-                              ),
-                              MarkerLayer(
-                                markers: [
-                                  Marker(
-                                    point: LatLng(lat!, lng!),
-                                    width: 40,
-                                    height: 40,
-                                    child: const Icon(
-                                      Icons.location_on,
-                                      size: 40,
-                                      color: Color(0xFF33B5FF),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ],
-                          )
-                        : _privacyOverlay(),
+    ? Stack(
+        children: [
+          FlutterMap(
+            options: MapOptions(
+              initialCenter: LatLng(lat!, lng!),
+              initialZoom: 16,
+              interactionOptions:
+                  const InteractionOptions(flags: InteractiveFlag.none),
+            ),
+            children: [
+              TileLayer(
+                urlTemplate:
+                    "https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+                userAgentPackageName: "com.senra.app",
+              ),
+              MarkerLayer(
+                markers: [
+                  Marker(
+                    point: LatLng(lat!, lng!),
+                    width: 40,
+                    height: 40,
+                    child: const Icon(
+                      Icons.location_on,
+                      size: 40,
+                      color: Color(0xFF33B5FF),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+
+          // 👇 TAP OVERLAY
+          Positioned(
+            bottom: 10,
+            right: 10,
+            child: Container(
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              decoration: BoxDecoration(
+                color: Colors.black54,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: const Row(
+                children: [
+                  Icon(Icons.open_in_new,
+                      color: Colors.white, size: 16),
+                  SizedBox(width: 6),
+                  Text("Open full map",
+                      style: TextStyle(color: Colors.white)),
+                ],
+              ),
+            ),
+          ),
+        ],
+      )
+    : _privacyOverlay(),
+
                   ),
                 ),
               ),

@@ -1,72 +1,114 @@
 import 'dart:io';
-import 'dart:typed_data';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
-import 'package:flutter/foundation.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
 import '../main.dart';
-
 
 class NotificationInitializer {
   static final FlutterLocalNotificationsPlugin _plugin =
       FlutterLocalNotificationsPlugin();
 
   static bool _initialized = false;
-  static String _currentCaregiverId = "";
 
-  static const String _channelId = 'senra_alerts_v2';
+  // ✅ TEXT-ONLY CHANNEL (DO NOT CHANGE ONCE RELEASED)
+  static const String _channelId = 'senra_text_alerts_v1';
 
   // ============================================================
   // 🔔 GLOBAL INIT
   // ============================================================
-  static Future<void> init({required String caregiverId}) async {
-    _currentCaregiverId = caregiverId;
+  static Future<void> init() async {
+    if (_initialized) return;
+    _initialized = true;
 
-    if (!_initialized) {
-      _initialized = true;
+    // ----------------------------------------------------------
+    // LOCAL NOTIFICATION INIT
+    // ----------------------------------------------------------
+    const AndroidInitializationSettings androidInit =
+        AndroidInitializationSettings('@mipmap/ic_launcher');
 
-      const AndroidInitializationSettings androidInit =
-          AndroidInitializationSettings('@mipmap/ic_launcher');
+    const InitializationSettings initSettings =
+        InitializationSettings(android: androidInit);
 
-      const InitializationSettings initSettings =
-          InitializationSettings(android: androidInit);
+    await _plugin.initialize(
+      initSettings,
+      onDidReceiveNotificationResponse: _onNotificationTap,
+    );
 
-      await _plugin.initialize(
-        initSettings,
-        onDidReceiveNotificationResponse: _onNotificationTap,
-      );
+    // ----------------------------------------------------------
+    // 🔕 TEXT-ONLY NOTIFICATION CHANNEL
+    // ----------------------------------------------------------
+    const AndroidNotificationChannel channel = AndroidNotificationChannel(
+      _channelId,
+      'Senra Alerts',
+      description: 'Text notifications for fall alerts',
+      importance: Importance.high,
 
-      final AndroidNotificationChannel channel = AndroidNotificationChannel(
-        _channelId,
-        'Senra Emergency Alerts',
-        description: 'Critical fall and emergency alerts from Senra',
-        importance: Importance.max,
-        enableVibration: true,
-        vibrationPattern:
-            Int64List.fromList([0, 1000, 500, 1000, 500, 1000]),
-        playSound: true,
-      );
+      // 🚫 NO SOUND, NO VIBRATION (IMMUTABLE)
+      playSound: false,
+      enableVibration: false,
+    );
 
-      await _plugin
-          .resolvePlatformSpecificImplementation<
-              AndroidFlutterLocalNotificationsPlugin>()
-          ?.createNotificationChannel(channel);
-    }
+    await _plugin
+        .resolvePlatformSpecificImplementation<
+            AndroidFlutterLocalNotificationsPlugin>()
+        ?.createNotificationChannel(channel);
 
+    // ----------------------------------------------------------
+    // 🔐 ANDROID 13+ PERMISSION
+    // ----------------------------------------------------------
     await FirebaseMessaging.instance.requestPermission(
       alert: true,
       badge: true,
-      sound: true,
+      sound: false,
     );
 
-    await _registerToken();
+    // ----------------------------------------------------------
+    // 🔁 TOKEN REGISTER / HEAL
+    // ----------------------------------------------------------
+    await _registerAndHealToken();
 
+    // ----------------------------------------------------------
+    // 🔔 LISTENERS
+    // ----------------------------------------------------------
     _listenForeground();
     _listenBackgroundTap();
     await _listenKilledTap();
+  }
+
+  // ============================================================
+  // 🔄 TOKEN REGISTER + SELF HEAL
+  // ============================================================
+  static Future<void> _registerAndHealToken() async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return;
+
+    final token = await FirebaseMessaging.instance.getToken();
+    if (token == null) return;
+
+    await FirebaseFirestore.instance
+        .collection('caregivers')
+        .doc(user.uid)
+        .set({
+      'fcmToken': token,
+      'fcmPlatform': Platform.isAndroid ? 'android' : 'ios',
+      'pushNotifications': true,
+      'fcmUpdatedAt': FieldValue.serverTimestamp(),
+    }, SetOptions(merge: true));
+
+    FirebaseMessaging.instance.onTokenRefresh.listen((newToken) async {
+      await FirebaseFirestore.instance
+          .collection('caregivers')
+          .doc(user.uid)
+          .set({
+        'fcmToken': newToken,
+        'fcmPlatform': Platform.isAndroid ? 'android' : 'ios',
+        'pushNotifications': true,
+        'fcmUpdatedAt': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
+    });
   }
 
   // ============================================================
@@ -77,7 +119,7 @@ class NotificationInitializer {
     final alertId = response.payload;
     if (alertId == null || alertId.isEmpty) return;
 
-    await _navigateToAlertFromId(alertId);
+    await _navigateToAlert(alertId);
   }
 
   static void _listenBackgroundTap() {
@@ -85,25 +127,24 @@ class NotificationInitializer {
       final alertId = message.data['alertId'];
       if (alertId == null) return;
 
-      await _navigateToAlertFromId(alertId);
+      await _navigateToAlert(alertId);
     });
   }
 
   static Future<void> _listenKilledTap() async {
     final msg = await FirebaseMessaging.instance.getInitialMessage();
     if (msg != null && msg.data['alertId'] != null) {
-      await _navigateToAlertFromId(msg.data['alertId']);
+      await _navigateToAlert(msg.data['alertId']);
     }
   }
 
   // ============================================================
-  // 🧠 CENTRAL ALERT NAVIGATION (KEY FIX)
+  // 🧠 NAVIGATION → ALERT SCREEN
   // ============================================================
-  static Future<void> _navigateToAlertFromId(String alertId) async {
+  static Future<void> _navigateToAlert(String alertId) async {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) return;
 
-    // 🔥 LOAD ALERT
     final alertSnap = await FirebaseFirestore.instance
         .collection('alerts')
         .doc(alertId)
@@ -115,17 +156,12 @@ class NotificationInitializer {
     final deviceId = alert['deviceId'];
     if (deviceId == null) return;
 
-    // 🔥 LOAD CAREGIVER PREFS
     final caregiverSnap = await FirebaseFirestore.instance
         .collection('caregivers')
         .doc(user.uid)
         .get();
 
     final caregiver = caregiverSnap.data() ?? {};
-
-    final vibrate = caregiver['emergencyVibration'] ?? true;
-    final playSound = caregiver['pushNotifications'] ?? true;
-    final showLocation = caregiver['locationSharing'] ?? true;
 
     navigatorKey.currentState?.pushReplacementNamed(
       '/alert',
@@ -134,12 +170,11 @@ class NotificationInitializer {
         'deviceId': deviceId,
         'fallType': alert['fallType'] ?? 'Fall Detected',
 
-        // 🔥 DECISIONS
-        'vibrate': vibrate,
-        'playSound': playSound,
-        'showLocation': showLocation,
+        // 🔥 DECISIONS PASSED INTO ALERT SCREEN
+        'vibrate': caregiver['emergencyVibration'] ?? true,
+        'playSound': caregiver['pushNotifications'] ?? true,
+        'showLocation': caregiver['locationSharing'] ?? true,
 
-        // 🔥 LOCATION
         'lat': alert['lat'],
         'lng': alert['lng'],
         'locationLabel': alert['location'] ?? '',
@@ -149,56 +184,47 @@ class NotificationInitializer {
   }
 
   // ============================================================
-  // 🔄 TOKEN REGISTRATION
-  // ============================================================
-  static Future<void> _registerToken() async {
-    final token = await FirebaseMessaging.instance.getToken();
-    if (token == null) return;
-    await _saveToken(token);
-
-    FirebaseMessaging.instance.onTokenRefresh.listen(_saveToken);
-  }
-
-  static Future<void> _saveToken(String token) async {
-    final user = FirebaseAuth.instance.currentUser;
-    final caregiverId =
-        _currentCaregiverId.isNotEmpty ? _currentCaregiverId : user?.uid;
-
-    if (caregiverId == null) return;
-
-    await FirebaseFirestore.instance
-        .collection('caregivers')
-        .doc(caregiverId)
-        .set({
-      'fcmToken': token,
-      'fcmPlatform': Platform.isAndroid ? 'android' : 'ios',
-      'fcmUpdatedAt': FieldValue.serverTimestamp(),
-    }, SetOptions(merge: true));
-  }
-
-  // ============================================================
-  // 📩 FOREGROUND NOTIFICATION
+  // 📩 FOREGROUND NOTIFICATION (TEXT ONLY)
   // ============================================================
   static void _listenForeground() {
-    FirebaseMessaging.onMessage.listen(showForegroundNotification);
+    FirebaseMessaging.onMessage.listen(_showForegroundNotification);
   }
 
-  static Future<void> showForegroundNotification(
+  static Future<void> _showForegroundNotification(
       RemoteMessage message) async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return;
+
+    final snap = await FirebaseFirestore.instance
+        .collection('caregivers')
+        .doc(user.uid)
+        .get();
+
+    if (!snap.exists) return;
+
+    final caregiver = snap.data()!;
+    if (caregiver['pushNotifications'] == false) return;
+
     final AndroidNotificationDetails androidDetails =
         AndroidNotificationDetails(
       _channelId,
-      'Senra Emergency Alerts',
-      importance: Importance.max,
+      'Senra Alerts',
+      channelDescription: 'Text notifications for fall alerts',
+      importance: Importance.high,
       priority: Priority.high,
-      playSound: true,
-      enableVibration: true,
+
+      // 🔕 HARD OFF
+      playSound: false,
+      enableVibration: false,
+
+      category: AndroidNotificationCategory.message,
     );
 
     await _plugin.show(
       DateTime.now().millisecondsSinceEpoch ~/ 1000,
       message.notification?.title ?? '🚨 Fall Detected',
-      message.notification?.body ?? 'Immediate attention required',
+      message.notification?.body ??
+          'Possible fall detected. Open Senra to respond.',
       NotificationDetails(android: androidDetails),
       payload: message.data['alertId']?.toString(),
     );
@@ -214,10 +240,9 @@ class NotificationInitializer {
     await FirebaseFirestore.instance
         .collection('caregivers')
         .doc(user.uid)
-        .set({'pushNotifications': enabled}, SetOptions(merge: true));
-  }
-
-  static void clearCaregiverContext() {
-    _currentCaregiverId = "";
+        .set({
+      'pushNotifications': enabled,
+      'updatedAt': FieldValue.serverTimestamp(),
+    }, SetOptions(merge: true));
   }
 }

@@ -12,7 +12,20 @@
           "package_name": "com.senra.app"
         }
       },
-      "oauth_client": [],
+      "oauth_client": [
+        {
+          "client_id": "953407757856-439skq3ic20a68398l6rfak61v0rotgp.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.senra.app",
+            "certificate_hash": "e8f38e80a788e0fd6e9c816062c0b382e34a544f"
+          }
+        },
+        {
+          "client_id": "953407757856-1g0ugff6tchhlscf73ha7fs1pc2343k9.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
       "api_key": [
         {
           "current_key": "AIzaSyBrGXzBWIiJUxMf8oNqxXze2vLSUHQFLao"
@@ -20,7 +33,19 @@
       ],
       "services": {
         "appinvite_service": {
-          "other_platform_oauth_client": []
+          "other_platform_oauth_client": [
+            {
+              "client_id": "953407757856-1g0ugff6tchhlscf73ha7fs1pc2343k9.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "953407757856-o950h15jjf8ekf4evrmu3tnpp33gcdda.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.example.senraApp"
+              }
+            }
+          ]
         }
       }
     }

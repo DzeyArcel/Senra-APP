@@ -10,8 +10,14 @@ class HelpNotifiedScreen extends StatelessWidget {
     final args =
         ModalRoute.of(context)?.settings.arguments as Map<String, dynamic>?;
 
-    final String location = args?["location"] ?? "Unknown location";
-    final String sentTime = args?["sentTime"] ?? "Just now";
+    final String location =
+        args?["location"] ?? "Unknown location";
+
+    final String address =
+        args?["address"] ?? "Address unavailable";
+
+    final String sentTime =
+        args?["sentTime"] ?? "Just now";
 
     final List<Map<String, String>> contacts =
         (args?["contacts"] as List<dynamic>? ?? [])
@@ -99,18 +105,41 @@ class HelpNotifiedScreen extends StatelessWidget {
 
               const SizedBox(height: 14),
 
-              // LOCATION
+              // LOCATION (SHORT)
               Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   const Icon(Icons.location_on,
                       color: Colors.white54, size: 18),
                   const SizedBox(width: 10),
                   Expanded(
                     child: Text(
-                      "Location: $location",
+                      location,
                       style: const TextStyle(
                         color: Colors.white70,
                         fontSize: 13,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+
+              const SizedBox(height: 10),
+
+              // ADDRESS (DETAILED)
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Icon(Icons.map_outlined,
+                      color: Colors.white54, size: 18),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      address,
+                      style: const TextStyle(
+                        color: Colors.white54,
+                        fontSize: 12,
+                        height: 1.4,
                       ),
                     ),
                   ),
@@ -150,7 +179,6 @@ class HelpNotifiedScreen extends StatelessWidget {
                           color: Color(0xFF4FC3F7), size: 18),
                       const SizedBox(width: 14),
 
-                      // NAME + NUMBER
                       Expanded(
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
@@ -175,7 +203,6 @@ class HelpNotifiedScreen extends StatelessWidget {
                         ),
                       ),
 
-                      // STATUS
                       const Text(
                         "⏳ Sending",
                         style: TextStyle(

@@ -65,7 +65,7 @@ caregiverId = user.uid;
 
     // ✅ INIT NOTIFICATIONS (safe: only runs once globally)
     if (caregiverId.isNotEmpty) {
-      await NotificationInitializer.init(caregiverId: caregiverId);
+      await NotificationInitializer.init();
     }
 
     // 🔁 Start syncing privacy preferences
@@ -226,7 +226,7 @@ void dispose() {
 
             if (data == null) return _noData();
 
-            final online = _isOnline(data["lastSync"]);
+            final online = _isOnline(data);
 
             final fallDetected = data["fallDetected"] == true &&
                 data["fallStatus"] != "cancelled_by_device";
@@ -257,14 +257,20 @@ void dispose() {
         ),
       );
 
-  bool _isOnline(dynamic rawSync) {
-    DateTime? t;
-    if (rawSync is Timestamp) t = rawSync.toDate();
-    if (rawSync is String) t = DateTime.tryParse(rawSync);
-    if (t == null) return false;
+  bool _isOnline(Map<String, dynamic> data) {
+  // 🚫 Explicit device transition state
+  if (data["status"] == "resetting") return false;
 
-    return DateTime.now().difference(t).inSeconds <= 20;
-  }
+  final rawSync = data["lastSync"];
+  DateTime? t;
+
+  if (rawSync is Timestamp) t = rawSync.toDate();
+  if (rawSync is String) t = DateTime.tryParse(rawSync);
+  if (t == null) return false;
+
+  return DateTime.now().difference(t).inSeconds <= 20;
+}
+
 
   Widget _dashboardUI(
       Map<String, dynamic> data, bool online, bool fallDetected) {
@@ -336,7 +342,13 @@ void dispose() {
           ),
 
           const SizedBox(height: 8),
-          if (!online) _offlineAlert(),
+
+if (data["status"] == "resetting")
+  _resettingAlert()
+else if (!online)
+  _offlineAlert(),
+
+
 
           const SizedBox(height: 6),
           const Text(
@@ -349,8 +361,11 @@ void dispose() {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              const Text(
-                "Device Connected —\nMonitoring Active",
+              Text(
+  data["status"] == "resetting"
+      ? "Reconnecting —\nPlease wait"
+      : "Device Connected —\nMonitoring Active",
+
                 style: TextStyle(
                     color: Colors.white,
                     fontSize: 14,
@@ -432,6 +447,27 @@ void dispose() {
       ),
     );
   }
+
+  Widget _resettingAlert() {
+  return Container(
+    padding: const EdgeInsets.all(10),
+    decoration: BoxDecoration(
+      color: Colors.orange.withOpacity(0.2),
+      borderRadius: BorderRadius.circular(10),
+    ),
+    child: const Row(
+      children: [
+        Icon(Icons.settings_backup_restore, color: Colors.orange),
+        SizedBox(width: 8),
+        Text(
+          "Device is resetting Wi-Fi",
+          style: TextStyle(color: Colors.orange),
+        ),
+      ],
+    ),
+  );
+}
+
 
   String _formatTime(dynamic raw) {
     DateTime? t;
