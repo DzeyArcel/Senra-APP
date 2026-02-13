@@ -6,21 +6,20 @@ class HelpNotifiedScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // SAFE ARGUMENTS
     final args =
-        ModalRoute.of(context)?.settings.arguments as Map<String, dynamic>?;
+        ModalRoute.of(context)?.settings.arguments as Map<String, dynamic>? ?? {};
 
     final String location =
-        args?["location"] ?? "Unknown location";
+        args["location"]?.toString() ?? "Location unavailable";
 
     final String address =
-        args?["address"] ?? "Address unavailable";
+        args["address"]?.toString() ?? "Address unavailable";
 
     final String sentTime =
-        args?["sentTime"] ?? "Just now";
+        args["sentTime"]?.toString() ?? "Just now";
 
     final List<Map<String, String>> contacts =
-        (args?["contacts"] as List<dynamic>? ?? [])
+        (args["contacts"] as List<dynamic>? ?? [])
             .map((e) => Map<String, String>.from(e))
             .toList();
 
@@ -44,9 +43,8 @@ class HelpNotifiedScreen extends StatelessWidget {
           ),
           child: Column(
             mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.center,
             children: [
-              // CHECK ICON
+              // ✔ SUCCESS ICON
               Container(
                 padding: const EdgeInsets.all(22),
                 decoration: BoxDecoration(
@@ -62,9 +60,8 @@ class HelpNotifiedScreen extends StatelessWidget {
 
               const SizedBox(height: 18),
 
-              // TITLE
               const Text(
-                "Emergency Alert Dispatched",
+                "Emergency Alert Sent",
                 style: TextStyle(
                   color: Colors.white,
                   fontSize: 20,
@@ -75,8 +72,7 @@ class HelpNotifiedScreen extends StatelessWidget {
               const SizedBox(height: 8),
 
               const Text(
-                "Your emergency alert has been sent.\n"
-                "Delivery may take a few moments depending on network signal.",
+                "Your alert has been successfully dispatched to registered caregivers.",
                 textAlign: TextAlign.center,
                 style: TextStyle(
                   color: Colors.white70,
@@ -87,72 +83,18 @@ class HelpNotifiedScreen extends StatelessWidget {
 
               const SizedBox(height: 26),
 
-              // SENT TIME
-              Row(
-                children: [
-                  const Icon(Icons.access_time,
-                      color: Colors.white54, size: 18),
-                  const SizedBox(width: 10),
-                  Text(
-                    "Dispatched at: $sentTime",
-                    style: const TextStyle(
-                      color: Colors.white70,
-                      fontSize: 13,
-                    ),
-                  ),
-                ],
-              ),
-
+              _infoRow(Icons.access_time, "Dispatched at", sentTime),
               const SizedBox(height: 14),
-
-              // LOCATION (SHORT)
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Icon(Icons.location_on,
-                      color: Colors.white54, size: 18),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: Text(
-                      location,
-                      style: const TextStyle(
-                        color: Colors.white70,
-                        fontSize: 13,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-
+              _infoRow(Icons.location_on, "Location", location),
               const SizedBox(height: 10),
-
-              // ADDRESS (DETAILED)
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Icon(Icons.map_outlined,
-                      color: Colors.white54, size: 18),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: Text(
-                      address,
-                      style: const TextStyle(
-                        color: Colors.white54,
-                        fontSize: 12,
-                        height: 1.4,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
+              _infoRow(Icons.map_outlined, "Address", address, subtle: true),
 
               const SizedBox(height: 28),
 
-              // CONTACTS TITLE
               const Align(
                 alignment: Alignment.centerLeft,
                 child: Text(
-                  "Contacts Being Notified:",
+                  "Notified Contacts",
                   style: TextStyle(
                     color: Colors.white70,
                     fontSize: 13,
@@ -163,99 +105,51 @@ class HelpNotifiedScreen extends StatelessWidget {
 
               const SizedBox(height: 12),
 
-              // CONTACT LIST
-              ...contacts.map((c) {
-                return Container(
-                  width: double.infinity,
-                  margin: const EdgeInsets.only(bottom: 12),
-                  padding: const EdgeInsets.all(14),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF1A2942),
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Row(
-                    children: [
-                      const Icon(Icons.phone,
-                          color: Color(0xFF4FC3F7), size: 18),
-                      const SizedBox(width: 14),
+              if (contacts.isEmpty)
+                const Text(
+                  "No emergency contacts available.",
+                  style: TextStyle(color: Colors.white38, fontSize: 12),
+                )
+              else
+                ...contacts.map((c) => _contactTile(c)),
 
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              c['name'] ?? "Unknown",
-                              style: const TextStyle(
-                                color: Colors.white,
-                                fontWeight: FontWeight.w700,
-                                fontSize: 15,
-                              ),
-                            ),
-                            const SizedBox(height: 3),
-                            Text(
-                              c['phone'] ?? "--",
-                              style: const TextStyle(
-                                color: Colors.white54,
-                                fontSize: 13,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
+              const SizedBox(height: 18),
 
-                      const Text(
-                        "⏳ Sending",
-                        style: TextStyle(
-                          color: Color(0xFF4FC3F7),
-                          fontWeight: FontWeight.w700,
-                          fontSize: 13,
-                        ),
-                      ),
-                    ],
-                  ),
-                );
-              }).toList(),
-
-              const SizedBox(height: 12),
-
-              // FOOTNOTE
               const Text(
-                "SMS delivery depends on network signal.\n"
-                "If delivery is delayed, the system will retry automatically.",
+                "Delivery time may vary depending on network conditions.",
                 textAlign: TextAlign.center,
                 style: TextStyle(
                   color: Colors.white38,
                   fontSize: 11,
-                  height: 1.4,
                 ),
               ),
 
               const SizedBox(height: 22),
 
-              // RETURN BUTTON
-              GestureDetector(
-                onTap: () {
-                  Navigator.pushNamedAndRemoveUntil(
-                    context,
-                    "/dashboard",
-                    (route) => false,
-                  );
-                },
-                child: Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.symmetric(vertical: 13),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF4FC3F7),
-                    borderRadius: BorderRadius.circular(24),
+              // RETURN
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton(
+                  onPressed: () {
+                    Navigator.pushNamedAndRemoveUntil(
+                      context,
+                      "/dashboard",
+                      (_) => false,
+                    );
+                  },
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF4FC3F7),
+                    foregroundColor: Colors.black87,
+                    padding: const EdgeInsets.symmetric(vertical: 13),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(24),
+                    ),
                   ),
-                  child: const Center(
-                    child: Text(
-                      "Return to Dashboard",
-                      style: TextStyle(
-                        color: Colors.black87,
-                        fontSize: 15,
-                        fontWeight: FontWeight.w800,
-                      ),
+                  child: const Text(
+                    "Return to Dashboard",
+                    style: TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w800,
                     ),
                   ),
                 ),
@@ -263,6 +157,84 @@ class HelpNotifiedScreen extends StatelessWidget {
             ],
           ),
         ),
+      ),
+    );
+  }
+
+  // ============================================================
+  // UI HELPERS
+  // ============================================================
+
+  static Widget _infoRow(
+    IconData icon,
+    String label,
+    String value, {
+    bool subtle = false,
+  }) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Icon(icon, color: Colors.white54, size: 18),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Text(
+            "$label: $value",
+            style: TextStyle(
+              color: subtle ? Colors.white54 : Colors.white70,
+              fontSize: subtle ? 12 : 13,
+              height: 1.4,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  static Widget _contactTile(Map<String, String> c) {
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: const Color(0xFF1A2942),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.phone, color: Color(0xFF4FC3F7), size: 18),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  c['name'] ?? "Unknown",
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w700,
+                    fontSize: 15,
+                  ),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  c['phone'] ?? "--",
+                  style: const TextStyle(
+                    color: Colors.white54,
+                    fontSize: 13,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const Text(
+            "Notified",
+            style: TextStyle(
+              color: Color(0xFF4FC3F7),
+              fontWeight: FontWeight.w700,
+              fontSize: 13,
+            ),
+          ),
+        ],
       ),
     );
   }

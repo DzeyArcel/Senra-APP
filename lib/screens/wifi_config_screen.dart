@@ -1,5 +1,6 @@
 // ============================================================
-// WifiConfigScreen.dart — THEMED + UX FINAL
+// WifiConfigScreen.dart — UI REFINED (PRODUCTION-READY)
+// Logic unchanged — UI / UX improved only
 // ============================================================
 
 import 'dart:async';
@@ -43,7 +44,6 @@ class _WifiConfigScreenState extends State<WifiConfigScreen> {
     super.dispose();
   }
 
-  // ============================================================
   Future<void> _startFlow() async {
     final prefs = await SharedPreferences.getInstance();
     deviceId = prefs.getString("pairedDevice");
@@ -51,64 +51,54 @@ class _WifiConfigScreenState extends State<WifiConfigScreen> {
     _listenForStableOnline();
   }
 
-  // ============================================================
   void _listenForStableOnline() {
-  final ref =
-      FirebaseFirestore.instance.collection("devices").doc(deviceId!);
+    final ref =
+        FirebaseFirestore.instance.collection("devices").doc(deviceId!);
 
-  sub = ref.snapshots().listen((snap) async {
-    if (!snap.exists || completed) return;
+    sub = ref.snapshots().listen((snap) async {
+      if (!snap.exists || completed) return;
 
-    final lastSync = snap.data()!["lastSync"];
-    DateTime? t;
-    if (lastSync is Timestamp) t = lastSync.toDate();
-    if (lastSync is String) t = DateTime.tryParse(lastSync);
+      final lastSync = snap.data()!["lastSync"];
+      DateTime? t;
+      if (lastSync is Timestamp) t = lastSync.toDate();
+      if (lastSync is String) t = DateTime.tryParse(lastSync);
 
-    final online =
-        t != null && DateTime.now().difference(t).inSeconds <= 15;
+      final online =
+          t != null && DateTime.now().difference(t).inSeconds <= 15;
 
-    // 🔴 Device offline → reset timer
-    if (!online) {
-      onlineSince = null;
-      return;
-    }
-
-    // 🟡 Online but not stable yet
-    onlineSince ??= DateTime.now();
-    if (DateTime.now().difference(onlineSince!).inSeconds < 10) {
-      if (step != WifiStep.waitingForReconnect) {
-        setState(() => step = WifiStep.waitingForReconnect);
+      if (!online) {
+        onlineSince = null;
+        return;
       }
-      return;
-    }
 
-    // 🟢 STABLE ONLINE — COMPLETE FLOW
-    completed = true;
+      onlineSince ??= DateTime.now();
 
-    final prefs = await SharedPreferences.getInstance();
+      if (DateTime.now().difference(onlineSince!).inSeconds < 10) {
+        if (step != WifiStep.waitingForReconnect) {
+          setState(() => step = WifiStep.waitingForReconnect);
+        }
+        return;
+      }
 
-    // 🔓 CRITICAL: FULLY UNLOCK WIFI FLOW
-    await prefs.setBool("needsWifiSetup", false);
-    await prefs.setBool("wifiLock", false);
-    await prefs.setBool("wifiResetSent", false);
-    await prefs.remove("wifiResetAt");
+      completed = true;
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool("needsWifiSetup", false);
+      await prefs.setBool("wifiLock", false);
+      await prefs.setBool("wifiResetSent", false);
+      await prefs.remove("wifiResetAt");
 
-    debugPrint("✅ Wi-Fi setup fully completed — all locks cleared");
+      await sub?.cancel();
 
-    await sub?.cancel();
+      if (!mounted) return;
+      setState(() => step = WifiStep.connected);
 
-    if (!mounted) return;
-    setState(() => step = WifiStep.connected);
+      await Future.delayed(const Duration(seconds: 1));
+      if (!mounted) return;
 
-    await Future.delayed(const Duration(seconds: 1));
-    if (!mounted) return;
+      Navigator.pushReplacementNamed(context, "/dashboard");
+    });
+  }
 
-    Navigator.pushReplacementNamed(context, "/dashboard");
-  });
-}
-
-
-  // ============================================================
   Future<void> _openWifiSettings() async {
     await launchUrl(Uri.parse("App-Prefs:root=WIFI"));
   }
@@ -121,25 +111,40 @@ class _WifiConfigScreenState extends State<WifiConfigScreen> {
     );
   }
 
-  // ============================================================
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: const Color(0xFF0E1625),
       body: SafeArea(
         child: Padding(
-          padding: const EdgeInsets.all(20),
+          padding: const EdgeInsets.all(22),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               const SizedBox(height: 12),
 
-              // 🧭 STEP HEADER
-              _StepHeader(step: step),
+              // TITLE
+              const Text(
+                "Set up Wi-Fi",
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 26,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+              const SizedBox(height: 6),
+              const Text(
+                "Connect your Senra device to your home network",
+                style: TextStyle(color: Colors.white70, fontSize: 14),
+              ),
+
+              const SizedBox(height: 22),
+
+              _StepIndicator(step: step),
 
               const SizedBox(height: 24),
 
-              // 🧱 MAIN CARD
+              // MAIN CARD
               Container(
                 padding: const EdgeInsets.all(22),
                 decoration: BoxDecoration(
@@ -149,9 +154,9 @@ class _WifiConfigScreenState extends State<WifiConfigScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    _StatusBanner(step: step),
+                    _StatusHeader(step: step),
 
-                    const SizedBox(height: 20),
+                    const SizedBox(height: 18),
 
                     _InstructionText(step: step),
 
@@ -171,15 +176,24 @@ class _WifiConfigScreenState extends State<WifiConfigScreen> {
                       child: Text(
                         setupPageOpened
                             ? "Reopen Setup Page"
-                            : "Open Setup Page",
+                            : "Open Device Setup Page",
                       ),
                     ),
 
                     if (step == WifiStep.waitingForReconnect) ...[
                       const SizedBox(height: 28),
                       const Center(
-                        child: CircularProgressIndicator(
-                          color: Color(0xFF33B5FF),
+                        child: Column(
+                          children: [
+                            CircularProgressIndicator(
+                              color: Color(0xFF33B5FF),
+                            ),
+                            SizedBox(height: 12),
+                            Text(
+                              "Connecting securely…",
+                              style: TextStyle(color: Colors.white70),
+                            ),
+                          ],
                         ),
                       ),
                     ],
@@ -193,82 +207,89 @@ class _WifiConfigScreenState extends State<WifiConfigScreen> {
     );
   }
 
-  // ============================================================
   ButtonStyle get _btnPrimary => ElevatedButton.styleFrom(
         backgroundColor: const Color(0xFF33B5FF),
         foregroundColor: Colors.black,
-        padding: const EdgeInsets.symmetric(vertical: 14),
+        padding: const EdgeInsets.symmetric(vertical: 15),
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(12),
+          borderRadius: BorderRadius.circular(14),
         ),
       );
 
   ButtonStyle get _btnSecondary => ElevatedButton.styleFrom(
         backgroundColor: const Color(0xFF22314D),
         foregroundColor: Colors.white,
-        padding: const EdgeInsets.symmetric(vertical: 14),
+        padding: const EdgeInsets.symmetric(vertical: 15),
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(12),
+          borderRadius: BorderRadius.circular(14),
         ),
       );
 }
 
 // ============================================================
-// COMPONENTS
+// UI COMPONENTS
 // ============================================================
 
-class _StepHeader extends StatelessWidget {
+class _StepIndicator extends StatelessWidget {
   final WifiStep step;
-  const _StepHeader({required this.step});
+  const _StepIndicator({required this.step});
 
   @override
   Widget build(BuildContext context) {
-    final index = step.index + 1;
-    return Text(
-      "Step $index of 3",
-      style: const TextStyle(
-        color: Color(0xFF33B5FF),
-        fontSize: 14,
-        fontWeight: FontWeight.w600,
-      ),
+    return Row(
+      children: List.generate(3, (i) {
+        final active = i <= step.index;
+        return Expanded(
+          child: Container(
+            height: 4,
+            margin: EdgeInsets.only(right: i == 2 ? 0 : 6),
+            decoration: BoxDecoration(
+              color: active
+                  ? const Color(0xFF33B5FF)
+                  : Colors.white12,
+              borderRadius: BorderRadius.circular(4),
+            ),
+          ),
+        );
+      }),
     );
   }
 }
 
-class _StatusBanner extends StatelessWidget {
+class _StatusHeader extends StatelessWidget {
   final WifiStep step;
-  const _StatusBanner({required this.step});
+  const _StatusHeader({required this.step});
 
   @override
   Widget build(BuildContext context) {
     IconData icon;
-    String text;
+    String title;
 
     switch (step) {
       case WifiStep.instructions:
         icon = Icons.wifi;
-        text = "Connect to SENRA-SETUP";
+        title = "Connect to Senra Setup Network";
         break;
       case WifiStep.waitingForReconnect:
         icon = Icons.sync;
-        text = "Connecting to your Wi-Fi…";
+        title = "Connecting to Home Wi-Fi";
         break;
       case WifiStep.connected:
         icon = Icons.check_circle;
-        text = "Connected";
+        title = "Wi-Fi Connected";
         break;
     }
 
     return Row(
       children: [
-        Icon(icon, color: const Color(0xFF33B5FF)),
+        Icon(icon, color: const Color(0xFF33B5FF), size: 22),
         const SizedBox(width: 10),
         Text(
-          text,
+          title,
           style: const TextStyle(
             color: Colors.white,
-            fontSize: 16,
-            fontWeight: FontWeight.w600,
+            fontSize: 17,
+            fontWeight: FontWeight.w700,
           ),
         ),
       ],
@@ -287,20 +308,20 @@ class _InstructionText extends StatelessWidget {
     switch (step) {
       case WifiStep.instructions:
         text =
-            "1. Open Wi-Fi settings\n"
-            "2. Connect to **SENRA-SETUP**\n"
-            "3. Open the setup page\n"
-            "4. Enter home Wi-Fi\n"
-            "5. Return here";
+            "• Open Wi-Fi settings and connect to **SENRA-SETUP**\n"
+            "• Open the device setup page\n"
+            "• Enter your home Wi-Fi details\n"
+            "• Return to this screen";
         break;
       case WifiStep.waitingForReconnect:
         text =
-            "Senra is restarting and connecting.\n\n"
-            "This usually takes under a minute.\n"
-            "You can reopen the setup page if needed.";
+            "Your Senra device is restarting and securely connecting.\n\n"
+            "This may take up to a minute. You can safely wait here.";
         break;
       case WifiStep.connected:
-        text = "Wi-Fi connected successfully.";
+        text =
+            "Your device is now connected and ready.\n\n"
+            "You’ll be redirected automatically.";
         break;
     }
 
@@ -309,6 +330,7 @@ class _InstructionText extends StatelessWidget {
       style: const TextStyle(
         color: Colors.white70,
         height: 1.6,
+        fontSize: 14,
       ),
     );
   }

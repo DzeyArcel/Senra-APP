@@ -46,7 +46,7 @@ class _LocationTrackingScreenState extends State<LocationTrackingScreen> {
   }
 
   // ==========================================================
-  // LOAD IDS (AUTH-SAFE)
+  // LOAD IDS
   // ==========================================================
   Future<void> _loadIds() async {
     final prefs = await SharedPreferences.getInstance();
@@ -74,7 +74,6 @@ class _LocationTrackingScreenState extends State<LocationTrackingScreen> {
         .snapshots()
         .listen((doc) {
       if (!doc.exists) return;
-
       setState(() {
         allowLocation = doc.data()?["locationSharing"] ?? true;
       });
@@ -82,7 +81,7 @@ class _LocationTrackingScreenState extends State<LocationTrackingScreen> {
   }
 
   // ==========================================================
-  // DEVICE GPS LISTENER
+  // DEVICE LISTENER
   // ==========================================================
   void _listenToDevice(String id) {
     gpsSub = FirebaseFirestore.instance
@@ -99,7 +98,6 @@ class _LocationTrackingScreenState extends State<LocationTrackingScreen> {
         });
         return;
       }
-
       _applyGpsData(snap.data()!);
     });
 
@@ -107,7 +105,7 @@ class _LocationTrackingScreenState extends State<LocationTrackingScreen> {
   }
 
   // ==========================================================
-  // APPLY GPS DATA (PRIVACY-RESPECTED)
+  // APPLY GPS DATA
   // ==========================================================
   void _applyGpsData(Map<String, dynamic> data) {
     final double? newLat = (data["lat"] as num?)?.toDouble();
@@ -135,17 +133,16 @@ class _LocationTrackingScreenState extends State<LocationTrackingScreen> {
       hasGps = true;
       address = "$newLat, $newLng";
       lastUpdate = ts != null
-          ? "${ts.hour.toString().padLeft(2, '0')}:${ts.minute.toString().padLeft(2, '0')}  •  ${ts.month}/${ts.day}/${ts.year}"
+          ? "${ts.hour.toString().padLeft(2, '0')}:${ts.minute.toString().padLeft(2, '0')} • ${ts.month}/${ts.day}/${ts.year}"
           : "Unknown";
     });
   }
 
   // ==========================================================
-  // OPEN FULL MAP (WEB)
+  // OPEN FULL MAP
   // ==========================================================
   void openOSM() {
     if (!allowLocation || lat == null || lng == null) return;
-
     final url =
         "https://www.openstreetmap.org/?mlat=$lat&mlon=$lng#map=18/$lat/$lng";
     launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
@@ -178,108 +175,187 @@ class _LocationTrackingScreenState extends State<LocationTrackingScreen> {
                 children: [
                   IconButton(
                     onPressed: () => Navigator.pop(context),
-                    icon: const Icon(Icons.arrow_back, color: Colors.white70),
+                    icon:
+                        const Icon(Icons.arrow_back, color: Colors.white70),
                   ),
                   const SizedBox(width: 6),
-                  const Text(
-                    "Location Tracking",
-                    style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 24,
-                        fontWeight: FontWeight.w700),
+                  const Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        "Location Tracking",
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 26,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                      SizedBox(height: 2),
+                      Text(
+                        "Emergency-based GPS updates",
+                        style:
+                            TextStyle(color: Colors.white70, fontSize: 13),
+                      ),
+                    ],
                   ),
                 ],
               ),
-              const SizedBox(height: 6),
-              const Text(
-                "Event-based GPS monitoring",
-                style: TextStyle(color: Colors.white70),
-              ),
-              const SizedBox(height: 22),
+
+              const SizedBox(height: 24),
 
               // MAP
               GestureDetector(
                 onTap: (hasGps && allowLocation) ? openOSM : null,
                 child: Container(
-                  height: 280,
+                  height: 300,
                   decoration: BoxDecoration(
                     color: const Color(0xFF162233),
-                    borderRadius: BorderRadius.circular(14),
+                    borderRadius: BorderRadius.circular(18),
+                    border: Border.all(color: Colors.white10),
                   ),
                   child: ClipRRect(
-                    borderRadius: BorderRadius.circular(14),
+                    borderRadius: BorderRadius.circular(18),
                     child: allowLocation && hasGps
-    ? Stack(
-        children: [
-          FlutterMap(
-            options: MapOptions(
-              initialCenter: LatLng(lat!, lng!),
-              initialZoom: 16,
-              interactionOptions:
-                  const InteractionOptions(flags: InteractiveFlag.none),
-            ),
-            children: [
-              TileLayer(
-                urlTemplate:
-                    "https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
-                userAgentPackageName: "com.senra.app",
-              ),
-              MarkerLayer(
-                markers: [
-                  Marker(
-                    point: LatLng(lat!, lng!),
-                    width: 40,
-                    height: 40,
-                    child: const Icon(
-                      Icons.location_on,
-                      size: 40,
-                      color: Color(0xFF33B5FF),
-                    ),
-                  ),
-                ],
-              ),
-            ],
-          ),
+                        ? Stack(
+                            children: [
+                              FlutterMap(
+                                options: MapOptions(
+                                  initialCenter: LatLng(lat!, lng!),
+                                  initialZoom: 16,
+                                  interactionOptions:
+                                      const InteractionOptions(
+                                          flags: InteractiveFlag.none),
+                                ),
+                                children: [
+                                  TileLayer(
+                                    urlTemplate:
+                                        "https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+                                    userAgentPackageName: "com.senra.app",
+                                  ),
+                                  MarkerLayer(
+                                    markers: [
+                                      Marker(
+                                        point: LatLng(lat!, lng!),
+                                        width: 44,
+                                        height: 44,
+                                        child: const Icon(
+                                          Icons.location_on,
+                                          size: 44,
+                                          color: Color(0xFF33B5FF),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ],
+                              ),
 
-          // 👇 TAP OVERLAY
-          Positioned(
-            bottom: 10,
-            right: 10,
-            child: Container(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-              decoration: BoxDecoration(
-                color: Colors.black54,
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: const Row(
-                children: [
-                  Icon(Icons.open_in_new,
-                      color: Colors.white, size: 16),
-                  SizedBox(width: 6),
-                  Text("Open full map",
-                      style: TextStyle(color: Colors.white)),
-                ],
-              ),
-            ),
-          ),
-        ],
-      )
-    : _privacyOverlay(),
+                              // STATUS
+                              Positioned(
+                                top: 12,
+                                left: 12,
+                                child: _statusPill(
+                                  icon: Icons.gps_fixed,
+                                  label: "Live location",
+                                  color: Colors.lightGreenAccent,
+                                ),
+                              ),
 
+                              // OPEN MAP
+                              Positioned(
+                                bottom: 12,
+                                right: 12,
+                                child: _actionPill(
+                                  icon: Icons.open_in_new,
+                                  label: "Open full map",
+                                ),
+                              ),
+                            ],
+                          )
+                        : _privacyOverlay(),
                   ),
                 ),
               ),
 
               const SizedBox(height: 26),
 
-              // DETAILS
-              _infoCard(),
+              // INFO CARD
+              Container(
+                padding: const EdgeInsets.all(20),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF162233),
+                  borderRadius: BorderRadius.circular(18),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Row(
+                      children: [
+                        Icon(Icons.place_rounded,
+                            color: Color(0xFF33B5FF)),
+                        SizedBox(width: 10),
+                        Text(
+                          "Current Location",
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w700,
+                            fontSize: 16,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 18),
+                    _infoBlock("Address / Coordinates", address),
+                    const SizedBox(height: 18),
+                    Row(
+                      children: [
+                        Expanded(
+                            child:
+                                _infoBlock("Last update", lastUpdate)),
+                        const SizedBox(width: 12),
+                        Expanded(
+                            child: _infoBlock(
+                                "Sharing",
+                                allowLocation
+                                    ? "Enabled"
+                                    : "Disabled")),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
 
               const SizedBox(height: 22),
 
               // HOW IT WORKS
-              _howItWorks(),
+              Container(
+                padding: const EdgeInsets.all(20),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF162233),
+                  borderRadius: BorderRadius.circular(18),
+                ),
+                child: const Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      "How location works",
+                      style: TextStyle(
+                        color: Color(0xFF33B5FF),
+                        fontWeight: FontWeight.w700,
+                        fontSize: 16,
+                      ),
+                    ),
+                    SizedBox(height: 14),
+                    _Bullet(
+                        "Location is shared only during emergencies"),
+                    _Bullet("GPS accuracy improves outdoors"),
+                    _Bullet(
+                        "First GPS lock may take a few minutes"),
+                    _Bullet(
+                        "Location sharing can be disabled anytime"),
+                    _Bullet("Senra prioritizes privacy and safety"),
+                  ],
+                ),
+              ),
             ],
           ),
         ),
@@ -295,7 +371,8 @@ class _LocationTrackingScreenState extends State<LocationTrackingScreen> {
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(Icons.lock_outline, color: Colors.white70, size: 36),
+          Icon(Icons.lock_outline,
+              color: Colors.white70, size: 36),
           SizedBox(height: 10),
           Text("Location sharing is disabled",
               style: TextStyle(color: Colors.white)),
@@ -307,84 +384,65 @@ class _LocationTrackingScreenState extends State<LocationTrackingScreen> {
     );
   }
 
-  Widget _infoCard() {
-    return Container(
-      padding: const EdgeInsets.all(18),
-      decoration: BoxDecoration(
-        color: const Color(0xFF162233),
-        borderRadius: BorderRadius.circular(14),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Row(
-            children: [
-              Icon(Icons.location_on_rounded, color: Color(0xFF33B5FF)),
-              SizedBox(width: 10),
-              Text("Current Location",
-                  style: TextStyle(
-                      color: Colors.white, fontWeight: FontWeight.w700)),
-            ],
-          ),
-          const SizedBox(height: 16),
-          _infoRow(Icons.place_rounded, address),
-          const SizedBox(height: 18),
-          _infoBlock("Last Update", lastUpdate),
-        ],
-      ),
-    );
-  }
-
-  Widget _howItWorks() {
-    return Container(
-      padding: const EdgeInsets.all(18),
-      decoration: BoxDecoration(
-        color: const Color(0xFF162233),
-        borderRadius: BorderRadius.circular(14),
-      ),
-      child: const Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            "How location works",
-            style: TextStyle(
-              color: Color(0xFF33B5FF),
-              fontWeight: FontWeight.w600,
-              fontSize: 16,
-            ),
-          ),
-          SizedBox(height: 12),
-          _Bullet("• Location is shared only during emergencies"),
-          _Bullet("• GPS accuracy improves with clear sky view"),
-          _Bullet("• First GPS lock may take a few minutes"),
-          _Bullet("• Location sharing can be disabled anytime"),
-          _Bullet("• Senra respects caregiver privacy"),
-        ],
-      ),
-    );
-  }
-
-  Widget _infoRow(IconData icon, String text) {
-    return Row(
-      children: [
-        Icon(icon, color: Colors.white70, size: 18),
-        const SizedBox(width: 8),
-        Expanded(child: Text(text, style: const TextStyle(color: Colors.white))),
-      ],
-    );
-  }
-
   Widget _infoBlock(String label, String value) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(label,
-            style: const TextStyle(color: Colors.white70, fontSize: 12)),
+            style:
+                const TextStyle(color: Colors.white70, fontSize: 12)),
         const SizedBox(height: 4),
         Text(value,
             style: const TextStyle(
-                color: Colors.white, fontWeight: FontWeight.w600)),
+                color: Colors.white,
+                fontWeight: FontWeight.w600)),
       ],
+    );
+  }
+
+  Widget _statusPill({
+    required IconData icon,
+    required String label,
+    required Color color,
+  }) {
+    return Container(
+      padding:
+          const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      decoration: BoxDecoration(
+        color: Colors.black.withOpacity(0.55),
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Row(
+        children: [
+          Icon(icon, color: color, size: 16),
+          const SizedBox(width: 6),
+          Text(label,
+              style: TextStyle(
+                  color: color, fontWeight: FontWeight.w600)),
+        ],
+      ),
+    );
+  }
+
+  Widget _actionPill({
+    required IconData icon,
+    required String label,
+  }) {
+    return Container(
+      padding:
+          const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      decoration: BoxDecoration(
+        color: Colors.black.withOpacity(0.55),
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Row(
+        children: [
+          Icon(icon, color: Colors.white, size: 16),
+          const SizedBox(width: 6),
+          Text(label,
+              style: const TextStyle(color: Colors.white)),
+        ],
+      ),
     );
   }
 }
@@ -398,7 +456,13 @@ class _Bullet extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Text(text,
-        style: const TextStyle(color: Colors.white70, fontSize: 13));
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: Text(
+        "• $text",
+        style:
+            const TextStyle(color: Colors.white70, fontSize: 13),
+      ),
+    );
   }
 }
