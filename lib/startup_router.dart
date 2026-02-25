@@ -133,26 +133,28 @@ class _StartupRouterState extends State<StartupRouter> {
     // 🚫 NEVER SKIP WIFI CONFIG UNTIL DEVICE IS ONLINE
     // =========================================================
     if (needsWifi) {
-      final online = await _deviceIsOnline(pairedDevice);
+  final online = await _deviceIsOnline(pairedDevice);
 
-      if (online) {
-        await prefs.setBool("needsWifiSetup", false);
-        await prefs.remove("wifiLock");
-        await prefs.remove("wifiResetSent");
-        await prefs.remove("wifiResetAt");
+  if (online) {
+    await prefs.setBool("needsWifiSetup", false);
+    await prefs.remove("wifiLock");
+    await prefs.remove("wifiResetSent");
+    await prefs.remove("wifiResetAt");
 
-        debugPrint("✅ WiFi setup completed → dashboard");
-        return "/dashboard";
-      }
+    debugPrint("✅ WiFi confirmed → dashboard");
+  } else {
+    debugPrint("⚠️ Device offline → dashboard (offline state)");
+  }
 
-      return "/wifi-config";
-    }
+  // 🚀 ALWAYS allow dashboard access
+  return "/dashboard";
+}
 
     // =========================================================
     // ✅ NORMAL FLOW
     // =========================================================
     final online = await _deviceIsOnline(pairedDevice);
-    return online ? "/dashboard" : "/connecting-senra";
+    return "/dashboard";
   }
 
   // ------------------------------------------------------------

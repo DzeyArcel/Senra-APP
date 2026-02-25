@@ -58,8 +58,6 @@ class _ConnectingToSenraScreenState extends State<ConnectingToSenraScreen> {
 
       if (!online) return;
 
-      // ✅ DEVICE ONLINE — CLEAR WIFI FLAG
-      await prefs.setBool("needsWifiSetup", false);
 
       // ✅ LET STARTUP ROUTER DECIDE FINAL SCREEN
       _go("/startup");
