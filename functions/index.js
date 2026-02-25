@@ -1,7 +1,8 @@
 /*************************************************
- * SENRA CLOUD FUNCTIONS — FINAL
+ * SENRA CLOUD FUNCTIONS — FINAL (PH TIME FIXED)
  * - Fall alert notifications (FCM)
- * - Safe alert lifecycle
+ * - Uses FALL TIME (not send time)
+ * - PH timezone enforced (Asia/Manila)
  * - Reverse geocoding (GPS → address)
  * - No duplicate alerts
  * - No retry loops
@@ -21,7 +22,40 @@ const fetch = require("node-fetch");
 initializeApp();
 
 /* =========================================================
-   1️⃣ SEND FALL ALERT (WITH ADDRESS + HARDENED)
+   🕒 FORMAT FALL TIME (PH TIME, SOURCE = ALERT TIMESTAMP)
+========================================================= */
+function formatFallTime(ts) {
+  try {
+    if (!ts) return "Unknown time";
+
+    const options = {
+      timeZone: "Asia/Manila",   // ✅ FORCE PH TIME
+      month: "short",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: true,
+    };
+
+    // Firestore Timestamp
+    if (typeof ts.toDate === "function") {
+      return ts.toDate().toLocaleString("en-PH", options);
+    }
+
+    // ISO / millis fallback
+    const d = new Date(ts);
+    if (!isNaN(d)) {
+      return d.toLocaleString("en-PH", options);
+    }
+
+    return "Unknown time";
+  } catch {
+    return "Unknown time";
+  }
+}
+
+/* =========================================================
+   1️⃣ SEND FALL ALERT (WITH FALL TIME + ADDRESS)
 ========================================================= */
 exports.sendFallAlert = onDocumentCreated(
   "alerts/{alertId}",
@@ -33,15 +67,13 @@ exports.sendFallAlert = onDocumentCreated(
     const alertId = event.params.alertId;
     const db = getFirestore();
 
-    // 🚫 Process only ONCE
+    // 🚫 Process only once
     if (data.status !== "pending" || data.delivered === true) {
-      console.log("⏭ Alert already processed:", alertId);
       return;
     }
 
     const deviceId = data.deviceId;
     if (!deviceId) {
-      console.error("❌ Missing deviceId:", alertId);
       await db.collection("alerts").doc(alertId).update({
         status: "invalid",
         error: "Missing deviceId",
@@ -58,29 +90,14 @@ exports.sendFallAlert = onDocumentCreated(
       .limit(1)
       .get();
 
-    if (caregiversSnap.empty) {
-      console.error("❌ No caregiver for device:", deviceId);
-      return;
-    }
+    if (caregiversSnap.empty) return;
 
     const caregiverDoc = caregiversSnap.docs[0];
     const caregiver = caregiverDoc.data();
     const caregiverId = caregiverDoc.id;
 
-  if (caregiver.pushNotifications === false) {
-  console.log("🔕 Push disabled:", caregiverId);
-  return;
-}
-
-
-    if (!caregiver.fcmToken) {
-      console.error("❌ Missing FCM token:", caregiverId);
-      await db.collection("alerts").doc(alertId).update({
-        status: "send_failed",
-        error: "Missing FCM token",
-      });
-      return;
-    }
+    if (caregiver.pushNotifications === false) return;
+    if (!caregiver.fcmToken) return;
 
     // --------------------------------------------------
     // 📍 Resolve address (safe fallback)
@@ -91,43 +108,43 @@ exports.sendFallAlert = onDocumentCreated(
       if (deviceSnap.exists && deviceSnap.data()?.address) {
         address = deviceSnap.data().address;
       }
-    } catch {
-      console.warn("⚠️ Failed to read device address:", deviceId);
-    }
+    } catch {}
 
     await db.collection("alerts").doc(alertId).update({ address });
 
     // --------------------------------------------------
+    // 🕒 FALL TIME (PH TIME, SOURCE OF TRUTH)
+    // --------------------------------------------------
+    const fallTime = formatFallTime(data.timestamp);
+
+    // --------------------------------------------------
     // 🔔 FCM PAYLOAD
     // --------------------------------------------------
-  const payload = {
-  token: caregiver.fcmToken,
+    const payload = {
+      token: caregiver.fcmToken,
 
-  notification: {
-    title: "🚨 Senra Alert",
-    body: `Possible fall detected.\n📍 ${address}`,
-  },
+      notification: {
+        title: "🚨 Senra Alert",
+        body:
+          `Possible fall detected\n` +
+          `🕒 ${fallTime}\n` +
+          `📍 ${address}`,
+      },
 
-  android: {
-    priority: "high",
-    notification: {
-      channelId: "senra_alerts_v3",
-      // ❌ NO category
-      // ❌ NO visibility
-      // ❌ NO sound here (channel controls it)
-    },
-  },
+      android: {
+        priority: "high",
+        notification: {
+          channelId: "senra_alerts_v3",
+        },
+      },
 
-  data: {
-    alertId: alertId,
-    deviceId: deviceId,
-    type: "fall_detected",
-    timestamp: Date.now().toString(),
-  },
-};
-
-
-
+      data: {
+        alertId,
+        deviceId,
+        type: "fall_detected",
+        fallTime,
+      },
+    };
 
     // --------------------------------------------------
     // 🚀 SEND NOTIFICATION
@@ -141,12 +158,7 @@ exports.sendFallAlert = onDocumentCreated(
         caregiverId,
         sentAt: FieldValue.serverTimestamp(),
       });
-
-      console.log("✅ Alert sent:", alertId);
     } catch (err) {
-      console.error("❌ FCM send failed:", err.code || err.message);
-
-      // 🧹 Clear invalid token once
       if (
         err.code === "messaging/registration-token-not-registered" ||
         err.message?.includes("Requested entity was not found")
@@ -155,11 +167,8 @@ exports.sendFallAlert = onDocumentCreated(
           .collection("caregivers")
           .doc(caregiverId)
           .update({ fcmToken: "" });
-
-        console.warn("🧹 Invalid FCM token cleared:", caregiverId);
       }
 
-      // ❗ Mark alert failed to prevent loops
       await db.collection("alerts").doc(alertId).update({
         status: "send_failed",
         error: err.message,
@@ -192,7 +201,7 @@ exports.resolveAddress = onDocumentUpdated(
         timeout: 8000,
       });
 
-      if (!res.ok) throw new Error("Geocoding failed");
+      if (!res.ok) throw new Error();
 
       const geo = await res.json();
       const address = geo.display_name || "Unknown location";
@@ -201,10 +210,6 @@ exports.resolveAddress = onDocumentUpdated(
         .collection("devices")
         .doc(event.params.deviceId)
         .update({ address });
-
-      console.log("📍 Address resolved:", address);
-    } catch (err) {
-      console.warn("⚠️ Reverse geocoding skipped:", err.message);
-    }
+    } catch {}
   }
 );

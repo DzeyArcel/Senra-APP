@@ -178,7 +178,8 @@ class _ManageDeviceScreenState extends State<ManageDeviceScreen> {
               snapshot.data!.data() as Map<String, dynamic>? ?? {};
 
           final name = raw["device_name"] ?? "Senra Wearable";
-          final firmware = raw["firmware"] ?? "v1.0.0";
+          final firmwareModel = raw["firmwareModel"] ?? "—";
+          final firmwareVersion = raw["firmwareVersion"] ?? "—";
           final battery = raw["batteryLevel"] ?? 0;
           final lastSyncText = _timeAgo(raw["lastSync"]);
 
@@ -270,13 +271,14 @@ class _ManageDeviceScreenState extends State<ManageDeviceScreen> {
 
                   const SizedBox(height: 22),
 
-                  _card(
-                    title: "Device Status",
-                    icon: Icons.memory_rounded,
-                    children: [
-                      _rowInfo("Firmware Version", firmware),
-                    ],
-                  ),
+                 _card(
+  title: "Device Firmware",
+  icon: Icons.memory_rounded,
+  children: [
+    _rowInfo("Model", firmwareModel),
+    _rowInfo("Version", firmwareVersion),
+  ],
+),
 
                   const SizedBox(height: 60),
                 ],

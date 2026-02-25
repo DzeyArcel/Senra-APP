@@ -37,30 +37,22 @@ class _EmergencyContactsScreenState extends State<EmergencyContactsScreen> {
     authSub = FirebaseAuth.instance.authStateChanges().listen((user) {
       if (!mounted) return;
 
-      if (user == null) {
-        setState(() {
-          caregiverId = "";
-          loading = false;
-        });
-        return;
-      }
-
       setState(() {
-        caregiverId = user.uid;
+        caregiverId = user?.uid ?? "";
         loading = false;
       });
     });
   }
 
   // =====================================================
-  // DELETE CONTACT
+  // DELETE PRIMARY CONTACT (FIXED DOC)
   // =====================================================
-  Future<void> _deleteContact(String contactId) async {
+  Future<void> _deleteContact() async {
     await FirebaseFirestore.instance
         .collection("caregivers")
         .doc(caregiverId)
         .collection("contacts")
-        .doc(contactId)
+        .doc("primary")
         .delete();
   }
 
@@ -91,16 +83,16 @@ class _EmergencyContactsScreenState extends State<EmergencyContactsScreen> {
     return Scaffold(
       backgroundColor: const Color(0xFF0E1625),
       body: SafeArea(
-        child: StreamBuilder<QuerySnapshot>(
+        child: StreamBuilder<DocumentSnapshot>(
           stream: FirebaseFirestore.instance
               .collection("caregivers")
               .doc(caregiverId)
               .collection("contacts")
-              .limit(1) // ✅ ONLY 1 CONTACT
+              .doc("primary") // 🔥 SINGLE SOURCE
               .snapshots(),
           builder: (context, snap) {
-            final docs = snap.data?.docs ?? [];
-            final canAdd = docs.isEmpty;
+            final exists = snap.data?.exists ?? false;
+            final data = snap.data?.data() as Map<String, dynamic>?;
 
             return SingleChildScrollView(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
@@ -126,7 +118,7 @@ class _EmergencyContactsScreenState extends State<EmergencyContactsScreen> {
                         ),
                       ),
                       const Spacer(),
-                      if (canAdd)
+                      if (!exists)
                         GestureDetector(
                           onTap: () {
                             showModalBottomSheet(
@@ -169,13 +161,13 @@ class _EmergencyContactsScreenState extends State<EmergencyContactsScreen> {
 
                   const SizedBox(height: 24),
 
-                  // ================= LIST =================
+                  // ================= CONTACT =================
                   if (!snap.hasData)
                     const Center(
                       child: CircularProgressIndicator(
                           color: Color(0xFF33B5FF)),
                     )
-                  else if (docs.isEmpty)
+                  else if (!exists)
                     const Text(
                       "No emergency contact yet.\nAdd one trusted person.",
                       style:
@@ -183,9 +175,9 @@ class _EmergencyContactsScreenState extends State<EmergencyContactsScreen> {
                     )
                   else
                     _contactCard(
-                      name: docs.first["name"] ?? "Unknown",
-                      phone: docs.first["phone"] ?? "",
-                      onDelete: () => _deleteContact(docs.first.id),
+                      name: data?["name"] ?? "Unknown",
+                      phone: data?["phone"] ?? "",
+                      onDelete: _deleteContact,
                     ),
 
                   const SizedBox(height: 30),
@@ -285,7 +277,9 @@ class _Bullet extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Text(text,
-        style: const TextStyle(color: Colors.white70, fontSize: 13));
+    return Text(
+      text,
+      style: const TextStyle(color: Colors.white70, fontSize: 13),
+    );
   }
 }

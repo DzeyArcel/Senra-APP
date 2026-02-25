@@ -1,12 +1,3 @@
-// ============================================================
-// AlertScreen.dart — SENRA FINAL EMERGENCY FLOW (2026)
-// - Caregiver CANNOT cancel alert
-// - Only device / elder can cancel
-// - Vibration strictly respects toggle
-// - No infinite vibration (OEM safe)
-// - Firestore verified before feedback
-// ============================================================
-
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -58,9 +49,6 @@ class _AlertScreenState extends State<AlertScreen> {
   StreamSubscription<DocumentSnapshot>? alertListener;
   StreamSubscription<DocumentSnapshot>? deviceListener;
 
-  // ============================================================
-  // INIT
-  // ============================================================
   @override
   void initState() {
     super.initState();
@@ -69,7 +57,7 @@ class _AlertScreenState extends State<AlertScreen> {
 
     _startListeners();
     _startCountdown();
-    _verifyAndStartFeedback(); // 🔥 SAFE ENTRY POINT
+    _verifyAndStartFeedback();
   }
 
   @override
@@ -84,15 +72,13 @@ class _AlertScreenState extends State<AlertScreen> {
   }
 
   // ============================================================
-  // 🔐 VERIFY SETTINGS BEFORE FEEDBACK (CRITICAL FIX)
+  // VERIFY SETTINGS
   // ============================================================
   Future<void> _verifyAndStartFeedback() async {
-    // 🔊 Sound can start immediately
     if (widget.playSound) {
       await _playAlertSound();
     }
 
-    // 📳 Vibration must be re-verified from Firestore
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) return;
 
@@ -112,13 +98,12 @@ class _AlertScreenState extends State<AlertScreen> {
   }
 
   // ============================================================
-  // 📳 VIBRATION (ONE-SHOT, TOGGLE SAFE)
+  // VIBRATION
   // ============================================================
   Future<void> _startVibration() async {
     final hasVibrator = await Vibration.hasVibrator();
     if (hasVibrator != true) return;
 
-    // ✅ ONE-TIME vibration only
     Vibration.vibrate(
       pattern: [0, 1000, 500, 1000],
     );
@@ -129,7 +114,7 @@ class _AlertScreenState extends State<AlertScreen> {
   }
 
   // ============================================================
-  // 🔊 SOUND
+  // SOUND
   // ============================================================
   Future<void> _playAlertSound() async {
     await audioPlayer.setReleaseMode(ReleaseMode.loop);
@@ -141,7 +126,7 @@ class _AlertScreenState extends State<AlertScreen> {
   }
 
   // ============================================================
-  // ⏱ COUNTDOWN
+  // COUNTDOWN
   // ============================================================
   void _startCountdown() {
     timer = Timer.periodic(const Duration(seconds: 1), (t) {
@@ -155,7 +140,7 @@ class _AlertScreenState extends State<AlertScreen> {
   }
 
   // ============================================================
-  // 🔥 FIRESTORE LISTENERS
+  // FIRESTORE LISTENERS
   // ============================================================
   void _startListeners() {
     alertListener = FirebaseFirestore.instance
@@ -182,7 +167,7 @@ class _AlertScreenState extends State<AlertScreen> {
   }
 
   // ============================================================
-  // 🚨 FINALIZE ALERT (AUTO OR SEND NOW)
+  // FINALIZE ALERT
   // ============================================================
   Future<void> _finalizeAlert() async {
     if (handled) return;
@@ -217,7 +202,7 @@ class _AlertScreenState extends State<AlertScreen> {
   }
 
   // ============================================================
-  // ❌ EXTERNAL CANCEL (DEVICE / ELDER ONLY)
+  // EXTERNAL CANCEL
   // ============================================================
   void _handleExternalCancel() {
     if (handled || redirected) return;
@@ -271,16 +256,12 @@ class _AlertScreenState extends State<AlertScreen> {
             ]),
             const SizedBox(height: 14),
 
+            // ✅ LOCATION SHOWN ONLY IF AVAILABLE
             if (widget.showLocation && widget.locationLabel.isNotEmpty)
               Text(
                 widget.locationLabel,
                 style: const TextStyle(color: Colors.white),
                 textAlign: TextAlign.center,
-              )
-            else
-              const Text(
-                "Location sharing disabled",
-                style: TextStyle(color: Colors.white38),
               ),
 
             const SizedBox(height: 24),

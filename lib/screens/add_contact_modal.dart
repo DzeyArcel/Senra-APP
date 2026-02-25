@@ -15,6 +15,9 @@ class _AddContactModalState extends State<AddContactModal> {
 
   bool saving = false;
 
+  // =====================================================
+  // SAVE / UPDATE EMERGENCY CONTACT (SINGLE SOURCE)
+  // =====================================================
   Future<void> _saveContact() async {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) return;
@@ -34,18 +37,32 @@ class _AddContactModalState extends State<AddContactModal> {
 
     setState(() => saving = true);
 
-    await FirebaseFirestore.instance
-        .collection("caregivers")
-        .doc(user.uid)
-        .collection("contacts")
-        .add({
-      "name": name,
-      "phone": phone,
-      "created_at": FieldValue.serverTimestamp(),
-    });
+    try {
+      // 🔥 FIX: ALWAYS WRITE TO FIXED DOC ID
+      await FirebaseFirestore.instance
+          .collection("caregivers")
+          .doc(user.uid)
+          .collection("contacts")
+          .doc("primary")
+          .set({
+        "name": name,
+        "phone": phone,
+        "updated_at": FieldValue.serverTimestamp(),
+      });
 
-    if (!mounted) return;
-    Navigator.pop(context);
+      if (!mounted) return;
+      Navigator.pop(context);
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text("Failed to save contact: $e"),
+          backgroundColor: Colors.redAccent,
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => saving = false);
+    }
   }
 
   @override
@@ -85,12 +102,14 @@ class _AddContactModalState extends State<AddContactModal> {
                 width: double.infinity,
                 padding: const EdgeInsets.symmetric(vertical: 14),
                 decoration: BoxDecoration(
-                  color: const Color(0xFF33B5FF),
+                  color: saving
+                      ? Colors.grey
+                      : const Color(0xFF33B5FF),
                   borderRadius: BorderRadius.circular(30),
                 ),
                 child: Center(
                   child: Text(
-                    saving ? "Saving..." : "Add Contact",
+                    saving ? "Saving..." : "Save Contact",
                     style: const TextStyle(
                       color: Colors.black,
                       fontWeight: FontWeight.w600,
@@ -105,15 +124,22 @@ class _AddContactModalState extends State<AddContactModal> {
     );
   }
 
-  Widget _field(String label, TextEditingController c) {
+  // =====================================================
+  // INPUT FIELD
+  // =====================================================
+  Widget _field(String label, TextEditingController controller) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 14),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(label,
-              style: const TextStyle(
-                  color: Colors.white70, fontSize: 13)),
+          Text(
+            label,
+            style: const TextStyle(
+              color: Colors.white70,
+              fontSize: 13,
+            ),
+          ),
           const SizedBox(height: 6),
           Container(
             decoration: BoxDecoration(
@@ -121,8 +147,11 @@ class _AddContactModalState extends State<AddContactModal> {
               borderRadius: BorderRadius.circular(10),
             ),
             child: TextField(
-              controller: c,
+              controller: controller,
               style: const TextStyle(color: Colors.white),
+              keyboardType: label.contains("Phone")
+                  ? TextInputType.phone
+                  : TextInputType.text,
               decoration: const InputDecoration(
                 border: InputBorder.none,
                 contentPadding:
