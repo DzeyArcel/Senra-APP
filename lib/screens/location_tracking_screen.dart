@@ -12,7 +12,8 @@ class LocationTrackingScreen extends StatefulWidget {
   const LocationTrackingScreen({super.key});
 
   @override
-  State<LocationTrackingScreen> createState() => _LocationTrackingScreenState();
+  State<LocationTrackingScreen> createState() =>
+      _LocationTrackingScreenState();
 }
 
 class _LocationTrackingScreenState extends State<LocationTrackingScreen> {
@@ -22,7 +23,7 @@ class _LocationTrackingScreenState extends State<LocationTrackingScreen> {
   double? lat;
   double? lng;
 
-  String address = "Waiting for GPS…";
+  String address = "Waiting for GPS signal…";
   String lastUpdate = "—";
 
   bool loading = true;
@@ -55,7 +56,7 @@ class _LocationTrackingScreenState extends State<LocationTrackingScreen> {
     final user = FirebaseAuth.instance.currentUser;
     caregiverId = user?.uid ?? "";
 
-    if (deviceId == null || deviceId!.isEmpty || caregiverId.isEmpty) {
+    if (deviceId == null || caregiverId.isEmpty) {
       setState(() => loading = false);
       return;
     }
@@ -131,7 +132,7 @@ class _LocationTrackingScreenState extends State<LocationTrackingScreen> {
       lat = newLat;
       lng = newLng;
       hasGps = true;
-      address = "$newLat, $newLng";
+      address = "${newLat.toStringAsFixed(6)}, ${newLng.toStringAsFixed(6)}";
       lastUpdate = ts != null
           ? "${ts.hour.toString().padLeft(2, '0')}:${ts.minute.toString().padLeft(2, '0')} • ${ts.month}/${ts.day}/${ts.year}"
           : "Unknown";
@@ -170,198 +171,212 @@ class _LocationTrackingScreenState extends State<LocationTrackingScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // HEADER
-              Row(
-                children: [
-                  IconButton(
-                    onPressed: () => Navigator.pop(context),
-                    icon:
-                        const Icon(Icons.arrow_back, color: Colors.white70),
-                  ),
-                  const SizedBox(width: 6),
-                  const Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        "Location Tracking",
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 26,
-                          fontWeight: FontWeight.w800,
-                        ),
-                      ),
-                      SizedBox(height: 2),
-                      Text(
-                        "Emergency-based GPS updates",
-                        style:
-                            TextStyle(color: Colors.white70, fontSize: 13),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-
-              const SizedBox(height: 24),
-
-              // MAP
-              GestureDetector(
-                onTap: (hasGps && allowLocation) ? openOSM : null,
-                child: Container(
-                  height: 300,
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF162233),
-                    borderRadius: BorderRadius.circular(18),
-                    border: Border.all(color: Colors.white10),
-                  ),
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(18),
-                    child: allowLocation && hasGps
-                        ? Stack(
-                            children: [
-                              FlutterMap(
-                                options: MapOptions(
-                                  initialCenter: LatLng(lat!, lng!),
-                                  initialZoom: 16,
-                                  interactionOptions:
-                                      const InteractionOptions(
-                                          flags: InteractiveFlag.none),
-                                ),
-                                children: [
-                                  TileLayer(
-                                    urlTemplate:
-                                        "https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
-                                    userAgentPackageName: "com.senra.app",
-                                  ),
-                                  MarkerLayer(
-                                    markers: [
-                                      Marker(
-                                        point: LatLng(lat!, lng!),
-                                        width: 44,
-                                        height: 44,
-                                        child: const Icon(
-                                          Icons.location_on,
-                                          size: 44,
-                                          color: Color(0xFF33B5FF),
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ],
-                              ),
-
-                              // STATUS
-                              Positioned(
-                                top: 12,
-                                left: 12,
-                                child: _statusPill(
-                                  icon: Icons.gps_fixed,
-                                  label: "Live location",
-                                  color: Colors.lightGreenAccent,
-                                ),
-                              ),
-
-                              // OPEN MAP
-                              Positioned(
-                                bottom: 12,
-                                right: 12,
-                                child: _actionPill(
-                                  icon: Icons.open_in_new,
-                                  label: "Open full map",
-                                ),
-                              ),
-                            ],
-                          )
-                        : _privacyOverlay(),
-                  ),
-                ),
-              ),
-
-              const SizedBox(height: 26),
-
-              // INFO CARD
-              Container(
-                padding: const EdgeInsets.all(20),
-                decoration: BoxDecoration(
-                  color: const Color(0xFF162233),
-                  borderRadius: BorderRadius.circular(18),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Row(
-                      children: [
-                        Icon(Icons.place_rounded,
-                            color: Color(0xFF33B5FF)),
-                        SizedBox(width: 10),
-                        Text(
-                          "Current Location",
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontWeight: FontWeight.w700,
-                            fontSize: 16,
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 18),
-                    _infoBlock("Address / Coordinates", address),
-                    const SizedBox(height: 18),
-                    Row(
-                      children: [
-                        Expanded(
-                            child:
-                                _infoBlock("Last update", lastUpdate)),
-                        const SizedBox(width: 12),
-                        Expanded(
-                            child: _infoBlock(
-                                "Sharing",
-                                allowLocation
-                                    ? "Enabled"
-                                    : "Disabled")),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-
+              _header(),
               const SizedBox(height: 22),
-
-              // HOW IT WORKS
-              Container(
-                padding: const EdgeInsets.all(20),
-                decoration: BoxDecoration(
-                  color: const Color(0xFF162233),
-                  borderRadius: BorderRadius.circular(18),
-                ),
-                child: const Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      "How location works",
-                      style: TextStyle(
-                        color: Color(0xFF33B5FF),
-                        fontWeight: FontWeight.w700,
-                        fontSize: 16,
-                      ),
-                    ),
-                    SizedBox(height: 14),
-                    _Bullet(
-                        "Location is shared only during emergencies"),
-                    _Bullet("GPS accuracy improves outdoors"),
-                    _Bullet(
-                        "First GPS lock may take a few minutes"),
-                    _Bullet(
-                        "Location sharing can be disabled anytime"),
-                    _Bullet("Senra prioritizes privacy and safety"),
-                  ],
-                ),
-              ),
+              _mapCard(),
+              const SizedBox(height: 22),
+              _infoCard(),
+              const SizedBox(height: 18),
+              _howItWorks(),
             ],
           ),
         ),
       ),
     );
   }
+
+  // ==========================================================
+  // SECTIONS
+  // ==========================================================
+  Widget _header() {
+    return Row(
+      children: [
+        IconButton(
+          onPressed: () => Navigator.pop(context),
+          icon: const Icon(Icons.arrow_back, color: Colors.white70),
+        ),
+        const SizedBox(width: 6),
+        const Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              "Location Tracking",
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 26,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+            SizedBox(height: 2),
+            Text(
+              "Live GPS during emergencies",
+              style: TextStyle(color: Colors.white70, fontSize: 13),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _mapCard() {
+    return GestureDetector(
+      onTap: (hasGps && allowLocation) ? openOSM : null,
+      child: Container(
+        height: 300,
+        decoration: BoxDecoration(
+          color: const Color(0xFF162233),
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(color: Colors.white10),
+        ),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(18),
+          child: allowLocation && hasGps
+              ? Stack(
+                  children: [
+                    FlutterMap(
+                      options: MapOptions(
+                        initialCenter: LatLng(lat!, lng!),
+                        initialZoom: 16,
+                        interactionOptions:
+                            const InteractionOptions(flags: InteractiveFlag.none),
+                      ),
+                      children: [
+                        TileLayer(
+                          urlTemplate:
+                              "https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+                          userAgentPackageName: "com.senra.app",
+                        ),
+                        MarkerLayer(
+                          markers: [
+                            Marker(
+                              point: LatLng(lat!, lng!),
+                              width: 44,
+                              height: 44,
+                              child: const Icon(
+                                Icons.location_on,
+                                size: 44,
+                                color: Color(0xFF33B5FF),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                    Positioned(
+                      top: 12,
+                      left: 12,
+                      child: _statusPill(
+                        Icons.gps_fixed,
+                        "Live location",
+                        Colors.lightGreenAccent,
+                      ),
+                    ),
+                    Positioned(
+                      bottom: 12,
+                      right: 12,
+                      child: _actionPill(Icons.open_in_new, "Open map"),
+                    ),
+                  ],
+                )
+              : _privacyOverlay(),
+        ),
+      ),
+    );
+  }
+
+  Widget _infoCard() {
+  return Container(
+    padding: const EdgeInsets.all(18),
+    decoration: BoxDecoration(
+      color: const Color(0xFF162233),
+      borderRadius: BorderRadius.circular(18),
+    ),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // TITLE
+        const Text(
+          "Current Status",
+          style: TextStyle(
+            color: Color(0xFF33B5FF),
+            fontWeight: FontWeight.w700,
+            fontSize: 16,
+          ),
+        ),
+
+        const SizedBox(height: 16),
+
+        // COORDINATES (FULL WIDTH)
+        _infoBlock(
+          "Coordinates",
+          address,
+          multiline: true,
+        ),
+
+        const SizedBox(height: 16),
+
+        // DIVIDER
+        Container(
+          height: 1,
+          color: Colors.white10,
+        ),
+
+        const SizedBox(height: 14),
+
+        // LAST UPDATE + SHARING (2-COLUMN, CLEAN)
+        Row(
+          children: [
+            Expanded(
+              child: _infoBlock(
+                "Last update",
+                lastUpdate,
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: _infoBlock(
+                "Sharing",
+                allowLocation ? "Enabled" : "Disabled",
+                highlight: allowLocation,
+              ),
+            ),
+          ],
+        ),
+      ],
+    ),
+  );
+}
+
+  Widget _howItWorks() {
+  return Container(
+    padding: const EdgeInsets.all(18),
+    decoration: BoxDecoration(
+      color: const Color(0xFF162233),
+      borderRadius: BorderRadius.circular(18),
+    ),
+    child: const Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          "How location works",
+          style: TextStyle(
+            color: Color(0xFF33B5FF),
+            fontWeight: FontWeight.w700,
+            fontSize: 16,
+          ),
+        ),
+
+        SizedBox(height: 14),
+
+        _Bullet("Shared only during emergencies"),
+        _Bullet("Accuracy improves outdoors"),
+        _Bullet("First GPS lock may take a few minutes"),
+        _Bullet("Can be disabled anytime in Settings"),
+        _Bullet("Privacy-first by design"),
+      ],
+    ),
+  );
+}
 
   // ==========================================================
   // UI HELPERS
@@ -371,43 +386,57 @@ class _LocationTrackingScreenState extends State<LocationTrackingScreen> {
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(Icons.lock_outline,
-              color: Colors.white70, size: 36),
+          Icon(Icons.lock_outline, color: Colors.white70, size: 36),
           SizedBox(height: 10),
-          Text("Location sharing is disabled",
+          Text("Location not available",
               style: TextStyle(color: Colors.white)),
           SizedBox(height: 6),
-          Text("Enable it in Settings to view location",
-              style: TextStyle(color: Colors.white54)),
+          Text(
+            "Enable location sharing in Settings",
+            style: TextStyle(color: Colors.white54),
+          ),
         ],
       ),
     );
   }
 
-  Widget _infoBlock(String label, String value) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(label,
-            style:
-                const TextStyle(color: Colors.white70, fontSize: 12)),
-        const SizedBox(height: 4),
-        Text(value,
-            style: const TextStyle(
-                color: Colors.white,
-                fontWeight: FontWeight.w600)),
-      ],
-    );
-  }
+  Widget _infoBlock(
+  String label,
+  String value, {
+  bool multiline = false,
+  bool highlight = false,
+}) {
+  return Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      Text(
+        label.toUpperCase(),
+        style: const TextStyle(
+          color: Colors.white54,
+          fontSize: 11,
+          letterSpacing: 0.6,
+          fontWeight: FontWeight.w600,
+        ),
+      ),
+      const SizedBox(height: 4),
+      Text(
+        value,
+        maxLines: multiline ? null : 2,
+        overflow: multiline ? null : TextOverflow.ellipsis,
+        style: TextStyle(
+          color: highlight ? const Color(0xFF33B5FF) : Colors.white,
+          fontSize: 14,
+          fontWeight: FontWeight.w600,
+          height: 1.4,
+        ),
+      ),
+    ],
+  );
+}
 
-  Widget _statusPill({
-    required IconData icon,
-    required String label,
-    required Color color,
-  }) {
+  Widget _statusPill(IconData icon, String label, Color color) {
     return Container(
-      padding:
-          const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
       decoration: BoxDecoration(
         color: Colors.black.withOpacity(0.55),
         borderRadius: BorderRadius.circular(20),
@@ -417,20 +446,15 @@ class _LocationTrackingScreenState extends State<LocationTrackingScreen> {
           Icon(icon, color: color, size: 16),
           const SizedBox(width: 6),
           Text(label,
-              style: TextStyle(
-                  color: color, fontWeight: FontWeight.w600)),
+              style: TextStyle(color: color, fontWeight: FontWeight.w600)),
         ],
       ),
     );
   }
 
-  Widget _actionPill({
-    required IconData icon,
-    required String label,
-  }) {
+  Widget _actionPill(IconData icon, String label) {
     return Container(
-      padding:
-          const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
       decoration: BoxDecoration(
         color: Colors.black.withOpacity(0.55),
         borderRadius: BorderRadius.circular(20),
@@ -439,8 +463,7 @@ class _LocationTrackingScreenState extends State<LocationTrackingScreen> {
         children: [
           Icon(icon, color: Colors.white, size: 16),
           const SizedBox(width: 6),
-          Text(label,
-              style: const TextStyle(color: Colors.white)),
+          Text(label, style: const TextStyle(color: Colors.white)),
         ],
       ),
     );
@@ -460,8 +483,7 @@ class _Bullet extends StatelessWidget {
       padding: const EdgeInsets.only(bottom: 6),
       child: Text(
         "• $text",
-        style:
-            const TextStyle(color: Colors.white70, fontSize: 13),
+        style: const TextStyle(color: Colors.white70, fontSize: 13),
       ),
     );
   }

@@ -45,15 +45,35 @@ class _EmergencyContactsScreenState extends State<EmergencyContactsScreen> {
   }
 
   // =====================================================
-  // DELETE PRIMARY CONTACT (FIXED DOC)
+  // 🗑 DELETE EMERGENCY CONTACT (APP + DEVICE SYNC)
   // =====================================================
   Future<void> _deleteContact() async {
+    if (caregiverId.isEmpty) return;
+
+    // 1️⃣ Delete caregiver contact
     await FirebaseFirestore.instance
         .collection("caregivers")
         .doc(caregiverId)
         .collection("contacts")
         .doc("primary")
         .delete();
+
+    // 2️⃣ CLEAR emergencyPhone in DEVICE DOC (FIRMWARE SAFETY)
+    final deviceSnap = await FirebaseFirestore.instance
+        .collection("devices")
+        .where("pairedTo", isEqualTo: caregiverId)
+        .limit(1)
+        .get();
+
+    if (deviceSnap.docs.isNotEmpty) {
+      await FirebaseFirestore.instance
+          .collection("devices")
+          .doc(deviceSnap.docs.first.id)
+          .set({
+        "emergencyPhone": "",
+        "updatedAt": FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
+    }
   }
 
   @override

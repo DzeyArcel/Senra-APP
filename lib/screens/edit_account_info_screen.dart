@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:shared_preferences/shared_preferences.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 
 class EditAccountInfoScreen extends StatefulWidget {
   const EditAccountInfoScreen({super.key});
@@ -11,10 +11,10 @@ class EditAccountInfoScreen extends StatefulWidget {
 
 class _EditAccountInfoScreenState extends State<EditAccountInfoScreen> {
   final TextEditingController nameController = TextEditingController();
-  final TextEditingController phoneController = TextEditingController();
 
   bool loading = true;
-  String? caregiverId;
+  String caregiverId = "";
+  String phoneNumber = "";
 
   @override
   void initState() {
@@ -23,16 +23,16 @@ class _EditAccountInfoScreenState extends State<EditAccountInfoScreen> {
   }
 
   // ============================================================
-  // LOAD CAREGIVER INFO
+  // LOAD CAREGIVER INFO (AUTH = SOURCE OF TRUTH)
   // ============================================================
   Future<void> _loadCaregiverInfo() async {
-    final prefs = await SharedPreferences.getInstance();
-    caregiverId = prefs.getString("caregiverId");
-
-    if (caregiverId == null) {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) {
       setState(() => loading = false);
       return;
     }
+
+    caregiverId = user.uid;
 
     final doc = await FirebaseFirestore.instance
         .collection("caregivers")
@@ -40,91 +40,37 @@ class _EditAccountInfoScreenState extends State<EditAccountInfoScreen> {
         .get();
 
     if (doc.exists) {
-      nameController.text = doc.data()?["name"] ?? "";
-      phoneController.text = doc.data()?["phone"] ?? ""; // should already be 09...
+      final data = doc.data()!;
+      nameController.text = data["name"] ?? "";
+      phoneNumber = data["phone"] ?? user.phoneNumber ?? "";
     }
 
     setState(() => loading = false);
   }
 
   // ============================================================
-  // NORMALIZE PH PHONE NUMBER → ALWAYS RETURNS 09XXXXXXXXX
-  // ============================================================
-  String? normalizePH(String input) {
-    input = input.replaceAll(" ", "");
-
-    final plus63 = RegExp(r'^\+639\d{9}$');
-    final zero9 = RegExp(r'^09\d{9}$');
-    final nine = RegExp(r'^9\d{9}$');
-    final sixThree = RegExp(r'^639\d{9}$');
-
-    if (zero9.hasMatch(input)) return input; // Already 09
-
-    if (plus63.hasMatch(input)) {
-      return "0${input.substring(3)}"; // +639XXXXXXXXX → 09XXXXXXXXX
-    }
-
-    if (sixThree.hasMatch(input)) {
-      return "0${input.substring(2)}"; // 639XXXXXXXXX → 09XXXXXXXXX
-    }
-
-    if (nine.hasMatch(input)) {
-      return "0$input"; // 9XXXXXXXXX → 09XXXXXXXXX
-    }
-
-    return null; // invalid
-  }
-
-  // ============================================================
-  // SAVE CHANGES
+  // SAVE NAME ONLY (🔥 CRITICAL FIX)
   // ============================================================
   Future<void> _saveChanges() async {
-    if (caregiverId == null) return;
-
     final name = nameController.text.trim();
-    final phoneRaw = phoneController.text.trim();
 
-    // Case: nothing entered
-    if (name.isEmpty && phoneRaw.isEmpty) {
-      _showMessage("Enter at least one field to update.");
+    if (name.isEmpty) {
+      _showMessage("Name cannot be empty.");
       return;
     }
 
-    // Validate phone only IF user typed something
-    String? normalizedPhone;
-    if (phoneRaw.isNotEmpty) {
-      normalizedPhone = normalizePH(phoneRaw);
-      if (normalizedPhone == null) {
-        _showMessage("Invalid phone number. Use PH format (09XXXXXXXXX).");
-        return;
-      }
-    }
-
-    final updateData = <String, dynamic>{};
-
-    if (name.isNotEmpty) updateData["name"] = name;
-    if (normalizedPhone != null) updateData["phone"] = normalizedPhone;
-
-    updateData["updated_at"] = FieldValue.serverTimestamp();
-
-    // Save to Firestore
     await FirebaseFirestore.instance
         .collection("caregivers")
         .doc(caregiverId)
-        .update(updateData);
+        .set({
+      "name": name,
+      "updatedAt": FieldValue.serverTimestamp(),
+    }, SetOptions(merge: true));
 
-    // Update local session
-    final prefs = await SharedPreferences.getInstance();
-    if (name.isNotEmpty) prefs.setString("caregiverName", name);
-    if (normalizedPhone != null) prefs.setString("caregiverPhone", normalizedPhone);
-
-    _showMessage("Account updated!");
-    Navigator.pop(context);
+    _showMessage("Name updated");
+    if (mounted) Navigator.pop(context);
   }
 
-  // ============================================================
-  // MESSAGE SNACKBAR
-  // ============================================================
   void _showMessage(String msg) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -142,10 +88,13 @@ class _EditAccountInfoScreenState extends State<EditAccountInfoScreen> {
     return Scaffold(
       backgroundColor: const Color(0xFF0E1625),
       body: loading
-          ? const Center(child: CircularProgressIndicator(color: Color(0xFF33B5FF)))
+          ? const Center(
+              child: CircularProgressIndicator(color: Color(0xFF33B5FF)),
+            )
           : SafeArea(
               child: SingleChildScrollView(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
@@ -154,11 +103,12 @@ class _EditAccountInfoScreenState extends State<EditAccountInfoScreen> {
                       children: [
                         IconButton(
                           onPressed: () => Navigator.pop(context),
-                          icon: const Icon(Icons.arrow_back, color: Colors.white70),
+                          icon: const Icon(Icons.arrow_back,
+                              color: Colors.white70),
                         ),
                         const SizedBox(width: 6),
                         const Text(
-                          "Edit Account Info",
+                          "Edit Account",
                           style: TextStyle(
                             color: Colors.white,
                             fontSize: 22,
@@ -170,7 +120,6 @@ class _EditAccountInfoScreenState extends State<EditAccountInfoScreen> {
 
                     const SizedBox(height: 30),
 
-                    // MAIN CARD
                     Container(
                       padding: const EdgeInsets.all(18),
                       decoration: BoxDecoration(
@@ -181,16 +130,18 @@ class _EditAccountInfoScreenState extends State<EditAccountInfoScreen> {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           const Text("Name",
-                              style: TextStyle(color: Colors.white, fontSize: 14)),
+                              style:
+                                  TextStyle(color: Colors.white, fontSize: 14)),
                           const SizedBox(height: 6),
                           _inputField(controller: nameController),
 
                           const SizedBox(height: 20),
 
-                          const Text("Phone Number (PH format: 09XXXXXXXXX)",
-                              style: TextStyle(color: Colors.white, fontSize: 14)),
+                          const Text("Phone Number",
+                              style:
+                                  TextStyle(color: Colors.white, fontSize: 14)),
                           const SizedBox(height: 6),
-                          _inputField(controller: phoneController),
+                          _readonlyField(phoneNumber),
 
                           const SizedBox(height: 26),
 
@@ -199,40 +150,17 @@ class _EditAccountInfoScreenState extends State<EditAccountInfoScreen> {
                               Expanded(
                                 child: GestureDetector(
                                   onTap: () => Navigator.pop(context),
-                                  child: Container(
-                                    padding: const EdgeInsets.symmetric(vertical: 14),
-                                    decoration: BoxDecoration(
-                                      color: const Color(0xFF223247),
-                                      borderRadius: BorderRadius.circular(10),
-                                    ),
-                                    child: const Center(
-                                      child: Text("Cancel",
-                                          style: TextStyle(color: Colors.white70)),
-                                    ),
-                                  ),
+                                  child: _button(
+                                      "Cancel", const Color(0xFF223247)),
                                 ),
                               ),
-
                               const SizedBox(width: 14),
-
                               Expanded(
                                 child: GestureDetector(
                                   onTap: _saveChanges,
-                                  child: Container(
-                                    padding: const EdgeInsets.symmetric(vertical: 14),
-                                    decoration: BoxDecoration(
-                                      color: const Color(0xFF33B5FF),
-                                      borderRadius: BorderRadius.circular(10),
-                                    ),
-                                    child: const Center(
-                                      child: Text(
-                                        "Save Changes",
-                                        style: TextStyle(
-                                            color: Colors.black87,
-                                            fontWeight: FontWeight.w700),
-                                      ),
-                                    ),
-                                  ),
+                                  child: _button(
+                                      "Save", const Color(0xFF33B5FF),
+                                      textColor: Colors.black),
                                 ),
                               ),
                             ],
@@ -240,8 +168,6 @@ class _EditAccountInfoScreenState extends State<EditAccountInfoScreen> {
                         ],
                       ),
                     ),
-
-                    const SizedBox(height: 60),
                   ],
                 ),
               ),
@@ -249,7 +175,6 @@ class _EditAccountInfoScreenState extends State<EditAccountInfoScreen> {
     );
   }
 
-  // INPUT FIELD
   Widget _inputField({required TextEditingController controller}) {
     return Container(
       decoration: BoxDecoration(
@@ -261,8 +186,40 @@ class _EditAccountInfoScreenState extends State<EditAccountInfoScreen> {
         style: const TextStyle(color: Colors.white),
         decoration: const InputDecoration(
           border: InputBorder.none,
-          contentPadding: EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+          contentPadding:
+              EdgeInsets.symmetric(horizontal: 14, vertical: 14),
         ),
+      ),
+    );
+  }
+
+  Widget _readonlyField(String value) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+      decoration: BoxDecoration(
+        color: const Color(0xFF101B2C),
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Text(
+        value,
+        style: const TextStyle(color: Colors.white70),
+      ),
+    );
+  }
+
+  Widget _button(String text, Color bg,
+      {Color textColor = Colors.white}) {
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 14),
+      decoration: BoxDecoration(
+        color: bg,
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Center(
+        child: Text(text,
+            style:
+                TextStyle(color: textColor, fontWeight: FontWeight.w700)),
       ),
     );
   }

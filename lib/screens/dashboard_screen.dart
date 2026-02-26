@@ -1,5 +1,5 @@
 // ***************************************************************
-// SENRA APP — DASHBOARD (OPTIMIZED 2025 FINAL VERSION)
+// SENRA APP — DASHBOARD (UI/UX FIXED, LOGIC SAFE)
 // Fully compatible with StartupRouter, AlertScreen, FW V14.7
 // ***************************************************************
 
@@ -11,7 +11,6 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../services/notification_initializer.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
-
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({super.key});
 
@@ -20,18 +19,16 @@ class DashboardScreen extends StatefulWidget {
 }
 
 class _DashboardScreenState extends State<DashboardScreen> {
-
   String? deviceId;
   String caregiverId = "";
   String cleanDeviceId = "";
 
-  // 🔐 Privacy flags synced from caregiver settings
   bool allowLocation = true;
   bool allowVibration = true;
 
   StreamSubscription? alertListener;
   StreamSubscription? privacyListener;
-  bool alertOpened = false; // IMPORTANT: never reset inside build()
+  bool alertOpened = false;
 
   @override
   void initState() {
@@ -40,88 +37,65 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   // ---------------------------------------------------------------
-  // LOAD CAREGIVER + DEVICE ID
+  // LOAD IDS
   // ---------------------------------------------------------------
   Future<void> _loadIds() async {
     final prefs = await SharedPreferences.getInstance();
-
     final user = FirebaseAuth.instance.currentUser;
 
-if (user == null) {
-  Navigator.pushReplacementNamed(context, "/welcome");
-  return;
-}
+    if (user == null) {
+      Navigator.pushReplacementNamed(context, "/welcome");
+      return;
+    }
 
-caregiverId = user.uid;
-
+    caregiverId = user.uid;
     deviceId = prefs.getString("pairedDevice") ?? "";
 
-    if (deviceId == null || deviceId!.isEmpty) {
+    if (deviceId!.isEmpty) {
       Navigator.pushReplacementNamed(context, "/device-pairing");
       return;
     }
 
     cleanDeviceId = deviceId!.replaceAll('"', "").trim();
 
-    // ✅ INIT NOTIFICATIONS (safe: only runs once globally)
-    if (caregiverId.isNotEmpty) {
-      await NotificationInitializer.init();
-    }
-
-    // 🔁 Start syncing privacy preferences
+    await NotificationInitializer.init();
     _syncPrivacySettings();
 
-    // WAIT 350ms BEFORE STARTING LISTENER
- Future.delayed(const Duration(milliseconds: 350), () {
-  if (!mounted) return;
-  _listenToAlerts();
-});
+    Future.delayed(const Duration(milliseconds: 350), () {
+      if (mounted) _listenToAlerts();
+    });
 
-   if (mounted) {
-  setState(() {});
-}
-
+    setState(() {});
   }
 
   // ---------------------------------------------------------------
-  // 🔐 SYNC PRIVACY SETTINGS FROM CAREGIVER DOC
-  // ---------------------------------------------------------------
   void _syncPrivacySettings() {
-  if (caregiverId.isEmpty) return;
+    privacyListener?.cancel();
 
-  privacyListener?.cancel();
+    privacyListener = FirebaseFirestore.instance
+        .collection("caregivers")
+        .doc(caregiverId)
+        .snapshots()
+        .listen((doc) {
+      if (!doc.exists || !mounted) return;
 
-  privacyListener = FirebaseFirestore.instance
-      .collection("caregivers")
-      .doc(caregiverId)
-      .snapshots()
-      .listen((doc) {
-    if (!mounted || !doc.exists) return;
-
-    final data = doc.data()!;
-
-    if (!mounted) return;
-
-    setState(() {
-      allowLocation = data["locationSharing"] ?? true;
-      allowVibration = data["emergencyVibration"] ?? true;
+      final data = doc.data()!;
+      setState(() {
+        allowLocation = data["locationSharing"] ?? true;
+        allowVibration = data["emergencyVibration"] ?? true;
+      });
     });
-  });
-}
+  }
 
-
-  // ---------------------------------------------------------------
-  // REALTIME ALERT LISTENER — HANDLES MULTIPLE ALERTS SAFELY
   // ---------------------------------------------------------------
   void _listenToAlerts() {
     alertListener = FirebaseFirestore.instance
         .collection("alerts")
-        .where("deviceId", isEqualTo: cleanDeviceId) // FILTER FIRST
-        .orderBy("timestamp", descending: true) // THEN ORDER
+        .where("deviceId", isEqualTo: cleanDeviceId)
+        .orderBy("timestamp", descending: true)
         .limit(1)
         .snapshots()
         .listen((snap) async {
-
       if (snap.docs.isEmpty) return;
 
       final doc = snap.docs.first;
@@ -130,84 +104,76 @@ caregiverId = user.uid;
       if (data["delivered"] == true) return;
       if (data["status"] == "handled") return;
       if (data["status"] == "cancelled_by_device") return;
-
       if (alertOpened) return;
+
       alertOpened = true;
 
       try {
-        // Load caregiver contacts
-        final cgSnap = await FirebaseFirestore.instance
-            .collection("caregivers")
-            .doc(caregiverId)
-            .get();
-
-        List<Map<String, String>> contacts = [];
-        if (cgSnap.exists) {
-          final rawList = (cgSnap.data()?["contacts"] ?? []) as List<dynamic>;
-          contacts = rawList.map((e) => Map<String, String>.from(e)).toList();
-        }
-
-        // 🧭 Respect Location Sharing
-        final String safeLocation = allowLocation
-            ? (data["location"] ?? "Unknown")
-            : "Location hidden by privacy settings";
-
-        final double safeLat = allowLocation ? (data["lat"] ?? 0.0).toDouble() : 0.0;
-        final double safeLng = allowLocation ? (data["lng"] ?? 0.0).toDouble() : 0.0;
-        final String safeMap = allowLocation ? (data["mapURL"] ?? "") : "";
-
-        // 📳 Respect Vibration preference
         if (allowVibration) {
           HapticFeedback.heavyImpact();
         }
 
-        // ✅ mark delivered BEFORE navigating (prevents double-trigger loops)
         await FirebaseFirestore.instance
             .collection("alerts")
             .doc(doc.id)
             .update({"delivered": true});
 
-        // ✅ wait until user closes AlertScreen
         await Navigator.pushNamed(
           context,
           "/alert",
           arguments: {
             "alertId": doc.id,
             "deviceId": cleanDeviceId,
-            "location": safeLocation,
-            "lat": safeLat,
-            "lng": safeLng,
-            "mapURL": safeMap,
+            "location": allowLocation
+                ? (data["location"] ?? "Unknown")
+                : "Location hidden",
+            "lat": allowLocation ? (data["lat"] ?? 0.0) : 0.0,
+            "lng": allowLocation ? (data["lng"] ?? 0.0) : 0.0,
+            "mapURL": allowLocation ? (data["mapURL"] ?? "") : "",
             "fallType": data["fallType"] ?? "Fall Detected",
-            "contacts": contacts,
             "startSeconds": 8,
           },
         );
-
       } finally {
-        // ✅ allow future alerts again
         alertOpened = false;
       }
     });
   }
 
- @override
-void dispose() {
-  alertListener?.cancel();
-  privacyListener?.cancel();
-  super.dispose();
-}
-
+  @override
+  void dispose() {
+    alertListener?.cancel();
+    privacyListener?.cancel();
+    super.dispose();
+  }
 
   // ---------------------------------------------------------------
-  // UI
+bool _isOnline(Map<String, dynamic> data) {
+  if (data["status"] == "resetting") return false;
+
+  final rawSync = data["lastSync"];
+  DateTime? t;
+
+  if (rawSync is Timestamp) t = rawSync.toDate();
+  if (rawSync is String) t = DateTime.tryParse(rawSync);
+  if (t == null) return false;
+
+  final diff = DateTime.now().difference(t).inSeconds;
+
+  // 🔥 KEY FIX:
+  // Allow longer silence BEFORE fallDetected flips true
+  return diff <= 60; // was 20
+}
+
+  bool _effectiveOnline(bool online, bool fallDetected) {
+    if (fallDetected) return true;
+    return online;
+  }
+
   // ---------------------------------------------------------------
   @override
   Widget build(BuildContext context) {
-    if (deviceId == null ||
-        deviceId!.isEmpty ||
-        caregiverId.isEmpty ||
-        cleanDeviceId.isEmpty) {
+    if (deviceId == null || cleanDeviceId.isEmpty) {
       return _loading();
     }
 
@@ -223,13 +189,13 @@ void dispose() {
             if (!snap.hasData) return _loading();
 
             final data = snap.data!.data() as Map<String, dynamic>?;
-
             if (data == null) return _noData();
-
-            final online = _isOnline(data);
 
             final fallDetected = data["fallDetected"] == true &&
                 data["fallStatus"] != "cancelled_by_device";
+
+            final rawOnline = _isOnline(data);
+            final online = _effectiveOnline(rawOnline, fallDetected);
 
             return _dashboardUI(data, online, fallDetected);
           },
@@ -238,40 +204,7 @@ void dispose() {
     );
   }
 
-  // ------------------ UI HELPERS -----------------------
-
-  Widget _loading() => const Scaffold(
-        backgroundColor: Color(0xFF0E1625),
-        body: Center(
-          child: CircularProgressIndicator(color: Color(0xFF33B5FF)),
-        ),
-      );
-
-  Widget _noData() => const Scaffold(
-        backgroundColor: Color(0xFF0E1625),
-        body: Center(
-          child: Text(
-            "Waiting for device data...",
-            style: TextStyle(color: Colors.white54),
-          ),
-        ),
-      );
-
-  bool _isOnline(Map<String, dynamic> data) {
-  // 🚫 Explicit device transition state
-  if (data["status"] == "resetting") return false;
-
-  final rawSync = data["lastSync"];
-  DateTime? t;
-
-  if (rawSync is Timestamp) t = rawSync.toDate();
-  if (rawSync is String) t = DateTime.tryParse(rawSync);
-  if (t == null) return false;
-
-  return DateTime.now().difference(t).inSeconds <= 20;
-}
-
-
+  // ---------------------------------------------------------------
   Widget _dashboardUI(
       Map<String, dynamic> data, bool online, bool fallDetected) {
     final battery = data["batteryLevel"] ?? 0;
@@ -291,6 +224,7 @@ void dispose() {
     );
   }
 
+  // ---------------------------------------------------------------
   Widget _header() {
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -305,7 +239,7 @@ void dispose() {
                     fontWeight: FontWeight.w800)),
             SizedBox(height: 4),
             Text("Your safety monitoring center",
-                style: TextStyle(color: Colors.white70, fontSize: 14)),
+                style: TextStyle(color: Colors.white70)),
           ],
         ),
         IconButton(
@@ -316,159 +250,197 @@ void dispose() {
     );
   }
 
-  Widget _statusCard(Map<String, dynamic> data, bool online,
-      bool fallDetected, int battery) {
-    final lastSync = data["lastSync"];
+  // ---------------------------------------------------------------
+  Widget _statusCard(
+  Map<String, dynamic> data,
+  bool online,
+  bool fallDetected,
+  int battery,
+) {
+  final lastSync = data["lastSync"];
 
-    return Container(
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        color: const Color(0xFF162233),
-        borderRadius: BorderRadius.circular(16),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Row(
-            children: [
-              Icon(Icons.shield_outlined, color: Color(0xFF33B5FF)),
-              SizedBox(width: 10),
-              Text("Device Status",
-                  style: TextStyle(
-                      color: Colors.white,
-                      fontWeight: FontWeight.w700,
-                      fontSize: 16)),
-            ],
-          ),
+  final bool isResetting = data["status"] == "resetting";
+  final bool contactingEmergency =
+      fallDetected && data["fallStatus"] == "pending";
 
-          const SizedBox(height: 8),
+  // ---------------- STATUS TEXT ----------------
+  final String headline = isResetting
+      ? "Reconnecting — please wait"
+      : fallDetected
+          ? contactingEmergency
+              ? "Handling emergency"
+              : "Emergency detected"
+          : online
+              ? "Monitoring active"
+              : "Temporarily offline";
 
-if (data["status"] == "resetting")
-  _resettingAlert()
-else if (!online)
-  _offlineAlert(),
+  final String badgeText = fallDetected
+      ? contactingEmergency
+          ? "Notifying"
+          : "Emergency"
+      : isResetting
+          ? "Reconnecting"
+          : online
+              ? "Online"
+              : "Offline";
 
+ final Color badgeColor = fallDetected
+    ? contactingEmergency
+        ? Colors.orangeAccent
+        : Colors.redAccent
+    : isResetting
+        ? Colors.orangeAccent
+        : online
+            ? Colors.lightGreenAccent
+            : Colors.orangeAccent;
 
+  // ---------------- DESCRIPTION ----------------
+  final String description = fallDetected
+      ? contactingEmergency
+          ? "Contacting emergency services and caregivers. SMS delivery depends on mobile signal."
+          : "Emergency contacts have been notified. Please follow the alert instructions."
+      : isResetting
+          ? "The Senra wearable is reconnecting to resume monitoring."
+          : online
+              ? "The Senra wearable detects falls and sends alerts to this app."
+              : "The device is temporarily offline. Monitoring will resume once connected.";
 
-          const SizedBox(height: 6),
-          const Text(
-            "The Senra wearable detects falls and sends alerts to this app.",
-            style: TextStyle(color: Colors.white70, fontSize: 13),
-          ),
-
-          const SizedBox(height: 16),
-
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text(
-  data["status"] == "resetting"
-      ? "Reconnecting —\nPlease wait"
-      : "Device Connected —\nMonitoring Active",
-
-                style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 14,
-                    fontWeight: FontWeight.w600),
-              ),
-              Text(
-                online ? "✓ Online" : "• Offline",
-                style: TextStyle(
-                    color:
-                        online ? Colors.lightGreenAccent : Colors.redAccent,
-                    fontWeight: FontWeight.w600),
-              ),
-            ],
-          ),
-
-          const SizedBox(height: 20),
-          Container(height: 1, color: Colors.white12),
-          const SizedBox(height: 14),
-
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Row(children: [
-                const Icon(Icons.battery_full_rounded,
-                    color: Colors.lightGreenAccent),
-                const SizedBox(width: 6),
-                Text("Battery $battery%",
-                    style: const TextStyle(color: Colors.white)),
-              ]),
-              Row(children: [
-                const Icon(Icons.access_time, color: Colors.blueAccent),
-                const SizedBox(width: 6),
-                Text("Last Sync: ${_formatTime(lastSync)}",
-                    style: const TextStyle(color: Colors.white)),
-              ]),
-            ],
-          ),
-
-          if (fallDetected) ...[
-            const SizedBox(height: 14),
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: Colors.redAccent.withOpacity(0.2),
-                borderRadius: BorderRadius.circular(10),
-              ),
-              child: const Row(
-                children: [
-                  Icon(Icons.warning_amber_rounded,
-                      color: Colors.redAccent),
-                  SizedBox(width: 10),
-                  Text("Fall Detected!",
-                      style: TextStyle(
-                          color: Colors.redAccent,
-                          fontWeight: FontWeight.bold)),
-                ],
+  return Container(
+    padding: const EdgeInsets.all(20),
+    decoration: BoxDecoration(
+      color: const Color(0xFF162233),
+      borderRadius: BorderRadius.circular(16),
+    ),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // ================= HEADER =================
+        const Row(
+          children: [
+            Icon(Icons.shield_outlined, color: Color(0xFF33B5FF)),
+            SizedBox(width: 10),
+            Text(
+              "Device Status",
+              style: TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.w700,
+                fontSize: 16,
               ),
             ),
           ],
-        ],
-      ),
-    );
-  }
-
-  Widget _offlineAlert() {
-    return Container(
-      padding: const EdgeInsets.all(10),
-      decoration: BoxDecoration(
-        color: Colors.red.withOpacity(0.18),
-        borderRadius: BorderRadius.circular(10),
-      ),
-      child: const Row(
-        children: [
-          Icon(Icons.wifi_off, color: Colors.redAccent),
-          SizedBox(width: 8),
-          Text("Device is offline",
-              style: TextStyle(color: Colors.redAccent)),
-        ],
-      ),
-    );
-  }
-
-  Widget _resettingAlert() {
-  return Container(
-    padding: const EdgeInsets.all(10),
-    decoration: BoxDecoration(
-      color: Colors.orange.withOpacity(0.2),
-      borderRadius: BorderRadius.circular(10),
-    ),
-    child: const Row(
-      children: [
-        Icon(Icons.settings_backup_restore, color: Colors.orange),
-        SizedBox(width: 8),
-        Text(
-          "Device is resetting Wi-Fi",
-          style: TextStyle(color: Colors.orange),
         ),
+
+        const SizedBox(height: 14),
+        // (rest of your widget stays the same)
+
+        // ================= STATUS ROW =================
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Expanded(
+              child: Text(
+                headline,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 15,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+            Container(
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+              decoration: BoxDecoration(
+                color: badgeColor.withOpacity(0.15),
+                borderRadius: BorderRadius.circular(20),
+              ),
+              child: Text(
+                badgeText,
+                style: TextStyle(
+                  color: badgeColor,
+                  fontWeight: FontWeight.w700,
+                  fontSize: 12,
+                ),
+              ),
+            ),
+          ],
+        ),
+
+        const SizedBox(height: 10),
+
+        // ================= DESCRIPTION =================
+        Text(
+          description,
+          style: const TextStyle(
+            color: Colors.white70,
+            fontSize: 13,
+            height: 1.4,
+          ),
+        ),
+
+        const SizedBox(height: 16),
+        Container(height: 1, color: Colors.white12),
+        const SizedBox(height: 14),
+
+        // ================= BATTERY + SYNC =================
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Row(
+              children: [
+                const Icon(Icons.battery_full_rounded,
+                    color: Colors.lightGreenAccent),
+                const SizedBox(width: 6),
+                Text(
+                  "Battery $battery%",
+                  style: const TextStyle(color: Colors.white),
+                ),
+              ],
+            ),
+            Row(
+              children: [
+                const Icon(Icons.access_time, color: Colors.blueAccent),
+                const SizedBox(width: 6),
+                Text(
+                  "Last sync: ${_formatTime(lastSync)}",
+                  style: const TextStyle(color: Colors.white),
+                ),
+              ],
+            ),
+          ],
+        ),
+
+        // ================= FALL WARNING =================
+        if (fallDetected) ...[
+          const SizedBox(height: 14),
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: Colors.redAccent.withOpacity(0.2),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: const Row(
+              children: [
+                Icon(Icons.warning_amber_rounded,
+                    color: Colors.redAccent),
+                SizedBox(width: 10),
+                Text(
+                  "Fall detected",
+                  style: TextStyle(
+                    color: Colors.redAccent,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
       ],
     ),
   );
 }
 
-
+  // ---------------------------------------------------------------
   String _formatTime(dynamic raw) {
     DateTime? t;
     if (raw is Timestamp) t = raw.toDate();
@@ -482,6 +454,7 @@ else if (!online)
     return "${diff.inDays} days ago";
   }
 
+  // ---------------------------------------------------------------
   Widget _quickAccess(BuildContext context) {
     return Container(
       padding: const EdgeInsets.all(20),
@@ -494,50 +467,25 @@ else if (!online)
         children: [
           const Text("Quick Access",
               style: TextStyle(
-                  color: Colors.white,
-                  fontWeight: FontWeight.w700,
-                  fontSize: 15)),
+                  color: Colors.white, fontWeight: FontWeight.w700)),
           const SizedBox(height: 20),
-
-          _quickItem(
-            icon: Icons.show_chart_rounded,
-            title: "Activity Log",
-            subtitle: "View history",
-            onTap: () =>
-                Navigator.pushNamed(context, "/activity-history"),
-          ),
-          const SizedBox(height: 12),
-
-          _quickItem(
-            icon: Icons.people_alt_rounded,
-            title: "Emergency Contacts",
-            subtitle: "Manage contacts",
-            onTap: () =>
-                Navigator.pushNamed(context, "/emergency-contacts"),
-          ),
-          const SizedBox(height: 12),
-
-          _quickItem(
-            icon: Icons.location_on_rounded,
-            title: "Location",
-            subtitle: "Track location",
-            onTap: () =>
-                Navigator.pushNamed(context, "/location-tracking"),
-          ),
+          _quickItem(Icons.show_chart, "Activity Log",
+              "View history", "/activity-history"),
+          _quickItem(Icons.people, "Emergency Contacts",
+              "Manage contacts", "/emergency-contacts"),
+          _quickItem(Icons.location_on, "Location",
+              "Track location", "/location-tracking"),
         ],
       ),
     );
   }
 
-  Widget _quickItem({
-    required IconData icon,
-    required String title,
-    required String subtitle,
-    required VoidCallback onTap,
-  }) {
+  Widget _quickItem(
+      IconData icon, String title, String subtitle, String route) {
     return GestureDetector(
-      onTap: onTap,
+      onTap: () => Navigator.pushNamed(context, route),
       child: Container(
+        margin: const EdgeInsets.only(bottom: 12),
         padding: const EdgeInsets.all(14),
         decoration: BoxDecoration(
           color: const Color(0xFF1B2A3A),
@@ -553,12 +501,9 @@ else if (!online)
                 Text(title,
                     style: const TextStyle(
                         color: Colors.white,
-                        fontWeight: FontWeight.w600,
-                        fontSize: 14)),
-                const SizedBox(height: 2),
+                        fontWeight: FontWeight.w600)),
                 Text(subtitle,
-                    style:
-                        const TextStyle(color: Colors.white54, fontSize: 12)),
+                    style: const TextStyle(color: Colors.white54)),
               ],
             ),
           ],
@@ -566,4 +511,19 @@ else if (!online)
       ),
     );
   }
+
+  Widget _loading() => const Scaffold(
+        backgroundColor: Color(0xFF0E1625),
+        body: Center(
+          child: CircularProgressIndicator(color: Color(0xFF33B5FF)),
+        ),
+      );
+
+  Widget _noData() => const Scaffold(
+        backgroundColor: Color(0xFF0E1625),
+        body: Center(
+          child: Text("Waiting for device data...",
+              style: TextStyle(color: Colors.white54)),
+        ),
+      );
 }

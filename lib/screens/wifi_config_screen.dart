@@ -1,6 +1,5 @@
 // ============================================================
-// WifiConfigScreen.dart — UI REFINED (PRODUCTION-READY)
-// Logic unchanged — UI / UX improved only
+// WifiConfigScreen.dart — UX POLISHED (LOGIC UNCHANGED)
 // ============================================================
 
 import 'dart:async';
@@ -81,6 +80,7 @@ class _WifiConfigScreenState extends State<WifiConfigScreen> {
       }
 
       completed = true;
+
       final prefs = await SharedPreferences.getInstance();
       await prefs.setBool("needsWifiSetup", false);
       await prefs.setBool("wifiLock", false);
@@ -123,9 +123,8 @@ class _WifiConfigScreenState extends State<WifiConfigScreen> {
             children: [
               const SizedBox(height: 12),
 
-              // TITLE
               const Text(
-                "Set up Wi-Fi",
+                "Connect Your Device",
                 style: TextStyle(
                   color: Colors.white,
                   fontSize: 26,
@@ -134,7 +133,7 @@ class _WifiConfigScreenState extends State<WifiConfigScreen> {
               ),
               const SizedBox(height: 6),
               const Text(
-                "Connect your Senra device to your home network",
+                "Let’s get your Senra device online",
                 style: TextStyle(color: Colors.white70, fontSize: 14),
               ),
 
@@ -144,7 +143,6 @@ class _WifiConfigScreenState extends State<WifiConfigScreen> {
 
               const SizedBox(height: 24),
 
-              // MAIN CARD
               Container(
                 padding: const EdgeInsets.all(22),
                 decoration: BoxDecoration(
@@ -155,11 +153,8 @@ class _WifiConfigScreenState extends State<WifiConfigScreen> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     _StatusHeader(step: step),
-
-                    const SizedBox(height: 18),
-
+                    const SizedBox(height: 16),
                     _InstructionText(step: step),
-
                     const SizedBox(height: 28),
 
                     ElevatedButton(
@@ -182,20 +177,7 @@ class _WifiConfigScreenState extends State<WifiConfigScreen> {
 
                     if (step == WifiStep.waitingForReconnect) ...[
                       const SizedBox(height: 28),
-                      const Center(
-                        child: Column(
-                          children: [
-                            CircularProgressIndicator(
-                              color: Color(0xFF33B5FF),
-                            ),
-                            SizedBox(height: 12),
-                            Text(
-                              "Connecting securely…",
-                              style: TextStyle(color: Colors.white70),
-                            ),
-                          ],
-                        ),
-                      ),
+                      const _ConnectingIndicator(),
                     ],
                   ],
                 ),
@@ -240,13 +222,13 @@ class _StepIndicator extends StatelessWidget {
       children: List.generate(3, (i) {
         final active = i <= step.index;
         return Expanded(
-          child: Container(
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 300),
             height: 4,
             margin: EdgeInsets.only(right: i == 2 ? 0 : 6),
             decoration: BoxDecoration(
-              color: active
-                  ? const Color(0xFF33B5FF)
-                  : Colors.white12,
+              color:
+                  active ? const Color(0xFF33B5FF) : Colors.white12,
               borderRadius: BorderRadius.circular(4),
             ),
           ),
@@ -268,15 +250,15 @@ class _StatusHeader extends StatelessWidget {
     switch (step) {
       case WifiStep.instructions:
         icon = Icons.wifi;
-        title = "Connect to Senra Setup Network";
+        title = "Connect to Senra Setup Wi-Fi";
         break;
       case WifiStep.waitingForReconnect:
         icon = Icons.sync;
-        title = "Connecting to Home Wi-Fi";
+        title = "Connecting Securely";
         break;
       case WifiStep.connected:
         icon = Icons.check_circle;
-        title = "Wi-Fi Connected";
+        title = "Connected Successfully";
         break;
     }
 
@@ -308,19 +290,19 @@ class _InstructionText extends StatelessWidget {
     switch (step) {
       case WifiStep.instructions:
         text =
-            "• Open Wi-Fi settings and connect to **SENRA-SETUP**\n"
-            "• Open the device setup page\n"
-            "• Enter your home Wi-Fi details\n"
-            "• Return to this screen";
+            "1. Open Wi-Fi settings and connect to **SENRA-SETUP**\n"
+            "2. Open the device setup page\n"
+            "3. Enter your home Wi-Fi details\n"
+            "4. Return here and wait for confirmation";
         break;
       case WifiStep.waitingForReconnect:
         text =
-            "Your Senra device is restarting and securely connecting.\n\n"
-            "This may take up to a minute. You can safely wait here.";
+            "Your device is restarting and connecting to your home Wi-Fi.\n\n"
+            "This usually takes less than a minute.";
         break;
       case WifiStep.connected:
         text =
-            "Your device is now connected and ready.\n\n"
+            "Your Senra device is now online and ready.\n\n"
             "You’ll be redirected automatically.";
         break;
     }
@@ -332,6 +314,28 @@ class _InstructionText extends StatelessWidget {
         height: 1.6,
         fontSize: 14,
       ),
+    );
+  }
+}
+
+class _ConnectingIndicator extends StatelessWidget {
+  const _ConnectingIndicator();
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: const [
+        SizedBox(height: 8),
+        CircularProgressIndicator(
+          color: Color(0xFF33B5FF),
+          strokeWidth: 3,
+        ),
+        SizedBox(height: 12),
+        Text(
+          "Waiting for device to come online…",
+          style: TextStyle(color: Colors.white70),
+        ),
+      ],
     );
   }
 }

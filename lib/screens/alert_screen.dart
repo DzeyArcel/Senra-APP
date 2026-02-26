@@ -106,6 +106,7 @@ class _AlertScreenState extends State<AlertScreen> {
 
     Vibration.vibrate(
       pattern: [0, 1000, 500, 1000],
+      repeat: 0,
     );
   }
 
@@ -131,7 +132,9 @@ class _AlertScreenState extends State<AlertScreen> {
   void _startCountdown() {
     timer = Timer.periodic(const Duration(seconds: 1), (t) {
       if (seconds > 1) {
-        if (mounted) setState(() => seconds--);
+        if (mounted) {
+          setState(() => seconds--);
+        }
       } else {
         t.cancel();
         _finalizeAlert();
@@ -241,58 +244,68 @@ class _AlertScreenState extends State<AlertScreen> {
               ),
             ],
           ),
-          child: Column(mainAxisSize: MainAxisSize.min, children: [
-            Row(children: const [
-              Icon(Icons.warning_amber_rounded, color: Colors.redAccent),
-              SizedBox(width: 8),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Row(
+                children: const [
+                  Icon(Icons.warning_amber_rounded,
+                      color: Colors.redAccent),
+                  SizedBox(width: 8),
+                  Text(
+                    "Fall detected",
+                    style: TextStyle(
+                      color: Colors.redAccent,
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ],
+              ),
+
+              const SizedBox(height: 14),
+
+              if (widget.showLocation &&
+                  widget.locationLabel.isNotEmpty)
+                Text(
+                  widget.locationLabel,
+                  style: const TextStyle(color: Colors.white),
+                  textAlign: TextAlign.center,
+                ),
+
+              const SizedBox(height: 24),
+
               Text(
-                "Fall detected",
-                style: TextStyle(
+                "$seconds s",
+                style: const TextStyle(
                   color: Colors.redAccent,
-                  fontSize: 16,
-                  fontWeight: FontWeight.bold,
+                  fontSize: 44,
+                  fontWeight: FontWeight.w900,
                 ),
               ),
-            ]),
-            const SizedBox(height: 14),
 
-            // ✅ LOCATION SHOWN ONLY IF AVAILABLE
-            if (widget.showLocation && widget.locationLabel.isNotEmpty)
-              Text(
-                widget.locationLabel,
-                style: const TextStyle(color: Colors.white),
+              const SizedBox(height: 10),
+
+              const Text(
+                "Emergency handling in progress.\n"
+                "SMS delivery depends on mobile signal.",
+                style: TextStyle(color: Colors.white38),
                 textAlign: TextAlign.center,
               ),
 
-            const SizedBox(height: 24),
+              const SizedBox(height: 28),
 
-            Text(
-              "$seconds s",
-              style: const TextStyle(
-                color: Colors.redAccent,
-                fontSize: 44,
-                fontWeight: FontWeight.w900,
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton(
+                  onPressed: handled ? null : _finalizeAlert,
+                  child: Text(
+                    handled ? "Sending..." : "Send Now",
+                  ),
+                ),
               ),
-            ),
-
-            const SizedBox(height: 10),
-
-            const Text(
-              "Emergency alert will be sent automatically",
-              style: TextStyle(color: Colors.white38),
-              textAlign: TextAlign.center,
-            ),
-
-            const SizedBox(height: 28),
-
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton(
-                onPressed: _finalizeAlert,
-                child: const Text("Send Now"),
-              ),
-            ),
-          ]),
+            ],
+          ),
         ),
       ),
     );

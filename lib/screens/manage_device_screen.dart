@@ -46,53 +46,67 @@ class _ManageDeviceScreenState extends State<ManageDeviceScreen> {
   // ==========================================================
   // 🔌 UNLINK DEVICE — AUTH + ECOSYSTEM SAFE
   // ==========================================================
-  Future<void> _unlinkDevice() async {
-    if (deviceId == null) return;
+ Future<void> _unlinkDevice() async {
+  if (deviceId == null) return;
 
-    final user = FirebaseAuth.instance.currentUser;
-    if (user == null) return;
+  final user = FirebaseAuth.instance.currentUser;
+  if (user == null) return;
 
-    final prefs = await SharedPreferences.getInstance();
+  final firestore = FirebaseFirestore.instance;
+  final prefs = await SharedPreferences.getInstance();
 
-    try {
-      // 1️⃣ Clear caregiver link
-      await FirebaseFirestore.instance
-          .collection("caregivers")
-          .doc(user.uid)
-          .update({
-        "pairedDevice": "",
-      });
+  try {
+    final deviceRef = firestore.collection("devices").doc(deviceId);
+    final deviceSnap = await deviceRef.get();
 
-      // 2️⃣ Clear device link
-      await FirebaseFirestore.instance
-          .collection("devices")
-          .doc(deviceId)
-          .update({
-        "paired_to": "",
-      });
-
-      // 3️⃣ Clear local state
-      await prefs.remove("pairedDevice");
-      await prefs.setBool("needsWifiSetup", true);
-
-      if (!mounted) return;
-
-      Navigator.pushNamedAndRemoveUntil(
-        context,
-        "/device-pairing",
-        (_) => false,
-      );
-    } catch (e) {
-      if (!mounted) return;
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text("Failed to unlink device: $e"),
-          backgroundColor: Colors.redAccent,
-        ),
-      );
+    if (!deviceSnap.exists) {
+      throw "Device record not found.";
     }
+
+    final data = deviceSnap.data() as Map<String, dynamic>;
+    final pairedTo = data["paired_to"];
+
+    // 🔐 Ownership check
+    if (pairedTo != user.uid) {
+      throw "You are not authorized to unlink this device.";
+    }
+
+    // 1️⃣ Clear caregiver link
+    await firestore.collection("caregivers").doc(user.uid).update({
+      "pairedDevice": "",
+    });
+
+    // 2️⃣ Clear device link + ownership metadata
+    await deviceRef.update({
+      "paired_to": "",
+      "ownerId": "",
+      "ownerName": "",
+      "wifiReset": false,
+      "wifiResetAck": false,
+    });
+
+    // 3️⃣ Clear local cache
+    await prefs.remove("pairedDevice");
+    await prefs.setBool("needsWifiSetup", true);
+
+    if (!mounted) return;
+
+    Navigator.pushNamedAndRemoveUntil(
+      context,
+      "/device-pairing",
+      (_) => false,
+    );
+  } catch (e) {
+    if (!mounted) return;
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text("Failed to unlink device: $e"),
+        backgroundColor: Colors.redAccent,
+      ),
+    );
   }
+}
 
   // ==========================================================
   // 📶 CHANGE WI-FI PASSWORD (RESET FLOW — ONE SHOT)

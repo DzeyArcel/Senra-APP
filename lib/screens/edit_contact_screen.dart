@@ -46,6 +46,24 @@ class _EditContactScreenState extends State<EditContactScreen> {
   }
 
   // ============================================================
+  // STEP 2 — SYNC EMERGENCY PHONE TO DEVICE DOC
+  // ============================================================
+  Future<void> _syncEmergencyPhoneToDevice(String phone) async {
+    final prefs = await SharedPreferences.getInstance();
+    final deviceId = prefs.getString("pairedDevice");
+
+    if (deviceId == null || deviceId.isEmpty) return;
+
+    await FirebaseFirestore.instance
+        .collection("devices")
+        .doc(deviceId)
+        .set({
+      "emergencyPhone": phone,
+      "updatedAt": FieldValue.serverTimestamp(),
+    }, SetOptions(merge: true));
+  }
+
+  // ============================================================
   // SAVE CONTACT CHANGES
   // ============================================================
   Future<void> _saveChanges() async {
@@ -69,6 +87,7 @@ class _EditContactScreenState extends State<EditContactScreen> {
     setState(() => saving = true);
 
     try {
+      // 1️⃣ SAVE TO CAREGIVER CONTACTS (APP SOURCE OF TRUTH)
       await FirebaseFirestore.instance
           .collection("caregivers")
           .doc(caregiverId)
@@ -81,6 +100,9 @@ class _EditContactScreenState extends State<EditContactScreen> {
         "relation": relation,
         "updated_at": FieldValue.serverTimestamp(),
       });
+
+      // 2️⃣ MIRROR PHONE TO DEVICE DOC (FOR FIRMWARE)
+      await _syncEmergencyPhoneToDevice(phone);
 
       if (!mounted) return;
       Navigator.pop(context);
@@ -135,7 +157,8 @@ class _EditContactScreenState extends State<EditContactScreen> {
               child: const Center(
                 child: Text(
                   "Delete Contact",
-                  style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
+                  style:
+                      TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
                 ),
               ),
             ),
@@ -265,7 +288,8 @@ class _EditContactScreenState extends State<EditContactScreen> {
                           child: Text(
                             saving ? "Saving..." : "Save Changes",
                             style: const TextStyle(
-                                color: Colors.black87, fontWeight: FontWeight.w600),
+                                color: Colors.black87,
+                                fontWeight: FontWeight.w600),
                           ),
                         ),
                       ),
@@ -327,7 +351,8 @@ class _EditContactScreenState extends State<EditContactScreen> {
         style: const TextStyle(color: Colors.white),
         decoration: const InputDecoration(
           border: InputBorder.none,
-          contentPadding: EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+          contentPadding:
+              EdgeInsets.symmetric(horizontal: 14, vertical: 12),
         ),
       ),
     );

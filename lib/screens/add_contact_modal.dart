@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class AddContactModal extends StatefulWidget {
   const AddContactModal({super.key});
@@ -16,7 +17,25 @@ class _AddContactModalState extends State<AddContactModal> {
   bool saving = false;
 
   // =====================================================
-  // SAVE / UPDATE EMERGENCY CONTACT (SINGLE SOURCE)
+  // STEP 2 — MIRROR PHONE TO DEVICE DOC (FIRMWARE USES THIS)
+  // =====================================================
+  Future<void> _syncEmergencyPhoneToDevice(String phone) async {
+    final prefs = await SharedPreferences.getInstance();
+    final deviceId = prefs.getString("pairedDevice");
+
+    if (deviceId == null || deviceId.isEmpty) return;
+
+    await FirebaseFirestore.instance
+        .collection("devices")
+        .doc(deviceId)
+        .set({
+      "emergencyPhone": phone,
+      "updatedAt": FieldValue.serverTimestamp(),
+    }, SetOptions(merge: true));
+  }
+
+  // =====================================================
+  // SAVE / UPDATE EMERGENCY CONTACT
   // =====================================================
   Future<void> _saveContact() async {
     final user = FirebaseAuth.instance.currentUser;
@@ -38,7 +57,7 @@ class _AddContactModalState extends State<AddContactModal> {
     setState(() => saving = true);
 
     try {
-      // 🔥 FIX: ALWAYS WRITE TO FIXED DOC ID
+      // 1️⃣ SAVE TO CAREGIVER CONTACTS (APP SOURCE OF TRUTH)
       await FirebaseFirestore.instance
           .collection("caregivers")
           .doc(user.uid)
@@ -49,6 +68,9 @@ class _AddContactModalState extends State<AddContactModal> {
         "phone": phone,
         "updated_at": FieldValue.serverTimestamp(),
       });
+
+      // 2️⃣ MIRROR PHONE TO DEVICE DOC (FOR FIRMWARE)
+      await _syncEmergencyPhoneToDevice(phone);
 
       if (!mounted) return;
       Navigator.pop(context);

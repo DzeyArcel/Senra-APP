@@ -209,28 +209,17 @@ class _DevicePairingScreenState extends State<DevicePairingScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Row(
-                  children: [
-                    IconButton(
-                      onPressed: () {
-                        Navigator.pushNamedAndRemoveUntil(
-                          context,
-                          "/caregiver-info",
-                          (route) => false,
-                        );
-                      },
-                      icon:
-                          const Icon(Icons.arrow_back, color: Colors.white70),
-                    ),
-                    const Text(
-                      "Device Pairing",
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 18,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ],
-                ),
+  children: const [
+    Text(
+      "Device Pairing",
+      style: TextStyle(
+        color: Colors.white,
+        fontSize: 18,
+        fontWeight: FontWeight.w600,
+      ),
+    ),
+  ],
+),
                 const SizedBox(height: 25),
                 const Text(
                   "Connect Your Senra Wearable",

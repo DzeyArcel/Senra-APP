@@ -1,13 +1,5 @@
-// ============================================================
-// PhoneAuthScreen.dart — REAL AUTH (WEAK SIGNAL SAFE)
-// - Keeps original UI
-// - Real Firebase Phone Auth
-// - FIXED: OTP → FCM → pushNotifications
-// ============================================================
-
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 
@@ -19,150 +11,81 @@ class PhoneAuthScreen extends StatefulWidget {
 }
 
 class _PhoneAuthScreenState extends State<PhoneAuthScreen> {
-  final TextEditingController phoneController = TextEditingController();
-  final TextEditingController otpController = TextEditingController();
+  final phoneController = TextEditingController();
+  final otpController = TextEditingController();
 
   bool codeSent = false;
-  bool isLoading = false;
+  bool loading = false;
+  String verificationId = "";
 
-  String _verificationId = "";
-
-  // ============================================================
-  // PH PHONE NORMALIZER
-  // ============================================================
+  // 🇵🇭 Normalize PH → +639XXXXXXXXX
   String? normalizePH(String input) {
     input = input.trim();
-
-    final r1 = RegExp(r'^\+639\d{9}$');
-    final r2 = RegExp(r'^09\d{9}$');
-    final r3 = RegExp(r'^9\d{9}$');
-    final r4 = RegExp(r'^639\d{9}$');
-
-    if (r1.hasMatch(input)) return input;
-    if (r2.hasMatch(input)) return input.replaceFirst("0", "+63");
-    if (r3.hasMatch(input)) return "+63$input";
-    if (r4.hasMatch(input)) return "+$input";
-
+    if (RegExp(r'^09\d{9}$').hasMatch(input)) {
+      return "+63${input.substring(1)}";
+    }
+    if (RegExp(r'^\+639\d{9}$').hasMatch(input)) {
+      return input;
+    }
     return null;
   }
 
-  // ============================================================
-  // POST-LOGIN HANDLER (🔥 FIXED)
-  // ============================================================
-  Future<void> _afterLogin(User user) async {
-    final uid = user.uid;
+  // ================= SEND OTP =================
+  Future<void> sendOTP() async {
+    final phone = normalizePH(phoneController.text);
 
-    final cgRef =
-        FirebaseFirestore.instance.collection("caregivers").doc(uid);
-
-    // 🔔 Always get fresh FCM token
-    final fcmToken = await FirebaseMessaging.instance.getToken();
-
-    final snap = await cgRef.get();
-
-    if (!snap.exists) {
-      // 🆕 First-time caregiver
-      await cgRef.set({
-        "phone": user.phoneNumber,
-        "devices": [],
-        "fcmToken": fcmToken,
-        "pushNotifications": true,
-        "createdAt": FieldValue.serverTimestamp(),
-        "updatedAt": FieldValue.serverTimestamp(),
-      });
-    } else {
-      // 🔁 OTP relogin / app update / token refresh
-      await cgRef.update({
-        "fcmToken": fcmToken,
-        "pushNotifications": true,
-        "updatedAt": FieldValue.serverTimestamp(),
-      });
+    if (phone == null) {
+      _error("Use format: 09XXXXXXXXX");
+      return;
     }
 
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool("auth_complete", true);
-
-    if (!mounted) return;
-
-    // 🔁 Always return to StartupRouter
-    Navigator.pushReplacementNamed(context, "/startup");
-  }
-
-  // ============================================================
-  // SEND OTP (REAL FIREBASE)
-  // ============================================================
-  Future<void> sendCode() async {
-    final normalized = normalizePH(phoneController.text);
-
-    if (normalized == null) {
-      return _error("Enter valid PH phone number (09xxxxxxxxx)");
-    }
-
-    setState(() => isLoading = true);
-
-    bool callbackFired = false;
-
-    // ⏱ Safety timeout (15s)
-    Future.delayed(const Duration(seconds: 15), () {
-      if (!callbackFired && mounted) {
-        setState(() => isLoading = false);
-        _error("Verification timeout. Check network or Firebase setup.");
-      }
-    });
+    setState(() => loading = true);
 
     await FirebaseAuth.instance.verifyPhoneNumber(
-      phoneNumber: normalized,
+      phoneNumber: phone,
       timeout: const Duration(seconds: 60),
 
       verificationCompleted: (credential) async {
-        callbackFired = true;
         final userCred =
             await FirebaseAuth.instance.signInWithCredential(credential);
         await _afterLogin(userCred.user!);
       },
 
       verificationFailed: (e) {
-        callbackFired = true;
-        if (mounted) {
-          setState(() => isLoading = false);
-          _error(e.message ?? "Verification failed");
-        }
+        if (!mounted) return;
+        setState(() => loading = false);
+        _error(e.message ?? "OTP failed. Try again.");
       },
 
       codeSent: (id, _) {
-        callbackFired = true;
-        _verificationId = id;
-        if (mounted) {
-          setState(() {
-            codeSent = true;
-            isLoading = false;
-          });
-          _info("OTP sent");
-        }
+        verificationId = id;
+        if (!mounted) return;
+        setState(() {
+          codeSent = true;
+          loading = false;
+        });
+        _info("OTP sent to your phone");
       },
 
       codeAutoRetrievalTimeout: (id) {
-        _verificationId = id;
+        verificationId = id;
       },
     );
   }
 
-  // ============================================================
-  // VERIFY OTP (MANUAL)
-  // ============================================================
-  Future<void> verifyCode() async {
-    final code = otpController.text.trim();
-
-    if (code.length < 6) {
-      return _error("Invalid code");
+  // ================= VERIFY OTP =================
+  Future<void> verifyOTP() async {
+    if (otpController.text.length != 6) {
+      _error("Enter the 6-digit code");
+      return;
     }
 
-    setState(() => isLoading = true);
+    setState(() => loading = true);
 
     try {
       final credential = PhoneAuthProvider.credential(
-        verificationId: _verificationId,
-        smsCode: code,
+        verificationId: verificationId,
+        smsCode: otpController.text.trim(),
       );
 
       final userCred =
@@ -170,30 +93,47 @@ class _PhoneAuthScreenState extends State<PhoneAuthScreen> {
 
       await _afterLogin(userCred.user!);
     } catch (_) {
-      _error("Authentication failed");
+      _error("Invalid OTP");
     }
 
-    setState(() => isLoading = false);
+    if (mounted) setState(() => loading = false);
   }
 
-  // ============================================================
-  // UI HELPERS
-  // ============================================================
-  void _error(String msg) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(msg), backgroundColor: Colors.redAccent),
-    );
+  // ================= AFTER LOGIN =================
+  Future<void> _afterLogin(User user) async {
+    final ref =
+        FirebaseFirestore.instance.collection("caregivers").doc(user.uid);
+
+    final fcm = await FirebaseMessaging.instance.getToken();
+    final snap = await ref.get();
+
+    if (!snap.exists) {
+      await ref.set({
+        "phone": user.phoneNumber,
+        "devices": [],
+        "fcmToken": fcm,
+        "createdAt": FieldValue.serverTimestamp(),
+      });
+    } else {
+      await ref.update({"fcmToken": fcm});
+    }
+
+    if (!mounted) return;
+    Navigator.pushNamedAndRemoveUntil(context, "/startup", (_) => false);
   }
 
-  void _info(String msg) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(msg), backgroundColor: Colors.green),
-    );
+  // ================= UI HELPERS =================
+  void _error(String m) {
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(m), backgroundColor: Colors.red));
   }
 
-  // ============================================================
-  // UI
-  // ============================================================
+  void _info(String m) {
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(m), backgroundColor: Colors.green));
+  }
+
+  // ================= UI =================
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -207,39 +147,66 @@ class _PhoneAuthScreenState extends State<PhoneAuthScreen> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   const SizedBox(height: 40),
-
                   const Text(
                     "Verify Your Phone",
                     style: TextStyle(
                       color: Colors.white,
                       fontSize: 22,
-                      fontWeight: FontWeight.w700,
+                      fontWeight: FontWeight.bold,
                     ),
                   ),
-
-                  const SizedBox(height: 10),
+                  const SizedBox(height: 12),
                   const Text(
                     "This helps secure alerts and device pairing.",
                     style: TextStyle(color: Colors.white70),
                   ),
+                  const SizedBox(height: 24),
 
-                  const SizedBox(height: 30),
+                  // 🔐 Robot notice (UX only)
+                  if (!codeSent)
+                    Container(
+                      margin: const EdgeInsets.only(bottom: 20),
+                      padding: const EdgeInsets.all(14),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF162233),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: Colors.white12),
+                      ),
+                      child: Row(
+                        children: const [
+                          Icon(Icons.security,
+                              color: Color(0xFF33B5FF), size: 20),
+                          SizedBox(width: 10),
+                          Expanded(
+                            child: Text(
+                              "For security, Google may ask you to confirm "
+                              "you’re not a robot. This is quick and normal.",
+                              style: TextStyle(
+                                  color: Colors.white70, fontSize: 13),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
 
                   _label("Phone Number"),
-                  _input(phoneController, "09xxxxxxxxx", enabled: !codeSent),
-
-                  const SizedBox(height: 20),
+                  _field(phoneController, "09XXXXXXXXX",
+                      enabled: !codeSent),
 
                   if (codeSent) ...[
+                    const SizedBox(height: 20),
                     _label("Verification Code"),
-                    _input(otpController, "Enter OTP"),
+                    _field(otpController, "Enter OTP"),
                   ],
 
                   const SizedBox(height: 30),
 
                   GestureDetector(
-                    onTap:
-                        isLoading ? null : (codeSent ? verifyCode : sendCode),
+                    onTap: loading
+                        ? null
+                        : codeSent
+                            ? verifyOTP
+                            : sendOTP,
                     child: Container(
                       width: double.infinity,
                       padding: const EdgeInsets.symmetric(vertical: 14),
@@ -249,9 +216,11 @@ class _PhoneAuthScreenState extends State<PhoneAuthScreen> {
                       ),
                       child: Center(
                         child: Text(
-                          isLoading
-                              ? "Processing..."
-                              : (codeSent ? "Verify" : "Send Code"),
+                          loading
+                              ? "Please wait…"
+                              : codeSent
+                                  ? "Verify"
+                                  : "Send OTP",
                           style: const TextStyle(
                             color: Colors.black87,
                             fontWeight: FontWeight.w600,
@@ -264,7 +233,7 @@ class _PhoneAuthScreenState extends State<PhoneAuthScreen> {
               ),
             ),
 
-            if (isLoading)
+            if (loading)
               Container(
                 color: Colors.black45,
                 child: const Center(
@@ -277,17 +246,14 @@ class _PhoneAuthScreenState extends State<PhoneAuthScreen> {
     );
   }
 
-  Widget _label(String text) => Padding(
+  Widget _label(String t) => Padding(
         padding: const EdgeInsets.only(bottom: 6),
-        child: Text(text,
-            style: const TextStyle(color: Colors.white70, fontSize: 14)),
+        child:
+            Text(t, style: const TextStyle(color: Colors.white70)),
       );
 
-  Widget _input(
-    TextEditingController c,
-    String hint, {
-    bool enabled = true,
-  }) {
+  Widget _field(TextEditingController c, String hint,
+      {bool enabled = true}) {
     return Container(
       decoration: BoxDecoration(
         color: const Color(0xFF101B2C),

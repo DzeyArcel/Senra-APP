@@ -13,54 +13,72 @@
     <!-- 🔔 ANDROID 13+ NOTIFICATIONS -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
 
-    <!-- ⚡ KEEP CPU AWAKE FOR BACKGROUND FCM -->
+    <!-- ⚡ KEEP CPU AWAKE FOR BACKGROUND -->
     <uses-permission android:name="android.permission.WAKE_LOCK"/>
 
     <!-- 🔄 RECEIVE AFTER REBOOT -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
 
- <application
-    android:label="Senra"
-    android:name="${applicationName}"
-    android:icon="@mipmap/ic_launcher">
+    <!-- 📲 OTP / PHONE AUTH (CRITICAL FOR XIAOMI) -->
+    <uses-permission android:name="android.permission.RECEIVE_SMS"/>
+    <uses-permission android:name="android.permission.READ_SMS"/>
+    <uses-permission android:name="android.permission.READ_PHONE_STATE"/>
 
-    <!-- 🔔 DEFAULT NOTIFICATION CHANNEL -->
-    <meta-data
-        android:name="com.google.firebase.messaging.default_notification_channel_id"
-        android:value="senra_alerts"/>
+    <application
+        android:label="Senra"
+        android:name="${applicationName}"
+        android:icon="@mipmap/ic_launcher">
 
-    <!-- 🗺️ GOOGLE MAPS (OPTIONAL) -->
-    <meta-data
-        android:name="com.google.android.geo.API_KEY"
-        android:value="YOUR_GOOGLE_MAPS_API_KEY"/>
-
-    <!-- 🚀 MAIN ACTIVITY -->
-    <activity
-        android:name=".MainActivity"
-        android:exported="true"
-        android:launchMode="singleTop"
-        android:taskAffinity=""
-        android:theme="@style/LaunchTheme"
-        android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
-        android:hardwareAccelerated="true"
-        android:windowSoftInputMode="adjustResize">
-
+        <!-- 🔔 DEFAULT NOTIFICATION CHANNEL -->
         <meta-data
-            android:name="io.flutter.embedding.android.NormalTheme"
-            android:resource="@style/NormalTheme"/>
+            android:name="com.google.firebase.messaging.default_notification_channel_id"
+            android:value="senra_alerts"/>
 
-        <intent-filter>
-            <action android:name="android.intent.action.MAIN"/>
-            <category android:name="android.intent.category.LAUNCHER"/>
-        </intent-filter>
-    </activity>
+        <!-- 🗺️ GOOGLE MAPS (OPTIONAL) -->
+        <meta-data
+            android:name="com.google.android.geo.API_KEY"
+            android:value="YOUR_GOOGLE_MAPS_API_KEY"/>
 
-    <!-- FLUTTER EMBEDDING -->
-    <meta-data
-        android:name="flutterEmbedding"
-        android:value="2"/>
-</application>
+        <!-- 🚀 MAIN ACTIVITY -->
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:launchMode="singleTop"
+            android:taskAffinity=""
+            android:theme="@style/LaunchTheme"
+            android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
+            android:hardwareAccelerated="true"
+            android:windowSoftInputMode="adjustResize">
 
+            <meta-data
+                android:name="io.flutter.embedding.android.NormalTheme"
+                android:resource="@style/NormalTheme"/>
+
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN"/>
+                <category android:name="android.intent.category.LAUNCHER"/>
+            </intent-filter>
+        </activity>
+
+        <!-- 🔐 REQUIRED FOR FIREBASE OTP / reCAPTCHA -->
+        <receiver
+            android:name="com.google.firebase.auth.internal.RecaptchaActivity"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <category android:name="android.intent.category.BROWSABLE"/>
+                <data android:scheme="https"/>
+                <data android:scheme="http"/>
+            </intent-filter>
+        </receiver>
+
+        <!-- FLUTTER EMBEDDING -->
+        <meta-data
+            android:name="flutterEmbedding"
+            android:value="2"/>
+
+    </application>
 
     <!-- REQUIRED FOR EXTERNAL INTENTS -->
     <queries>
