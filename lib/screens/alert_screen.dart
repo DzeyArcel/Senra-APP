@@ -14,9 +14,6 @@ class AlertScreen extends StatefulWidget {
   final bool playSound;
   final bool showLocation;
 
-  final double? lat;
-  final double? lng;
-  final String locationLabel;
   final int startSeconds;
 
   const AlertScreen({
@@ -27,9 +24,6 @@ class AlertScreen extends StatefulWidget {
     required this.vibrate,
     required this.playSound,
     required this.showLocation,
-    this.lat,
-    this.lng,
-    this.locationLabel = "",
     this.startSeconds = 30,
   });
 
@@ -38,6 +32,7 @@ class AlertScreen extends StatefulWidget {
 }
 
 class _AlertScreenState extends State<AlertScreen> {
+
   late int seconds;
   Timer? timer;
 
@@ -46,18 +41,17 @@ class _AlertScreenState extends State<AlertScreen> {
   bool handled = false;
   bool redirected = false;
 
+  double? lat;
+  double? lng;
+
   StreamSubscription<DocumentSnapshot>? alertListener;
   StreamSubscription<DocumentSnapshot>? deviceListener;
 
   @override
   void initState() {
     super.initState();
-
     seconds = widget.startSeconds;
-
-    _startListeners();
-    _startCountdown();
-    _verifyAndStartFeedback();
+    _checkAlertState();
   }
 
   @override
@@ -71,10 +65,41 @@ class _AlertScreenState extends State<AlertScreen> {
     super.dispose();
   }
 
-  // ============================================================
-  // VERIFY SETTINGS
-  // ============================================================
+  Future<void> _checkAlertState() async {
+
+    final doc = await FirebaseFirestore.instance
+        .collection("alerts")
+        .doc(widget.alertId)
+        .get();
+
+    if (!doc.exists) {
+      if (!mounted) return;
+      Navigator.pushReplacementNamed(context, "/dashboard");
+      return;
+    }
+
+    final data = doc.data();
+
+    final status = data?["status"];
+
+    lat = (data?["lat"] as num?)?.toDouble();
+    lng = (data?["lng"] as num?)?.toDouble();
+
+    if (status != "pending") {
+      if (!mounted) return;
+      Navigator.pushReplacementNamed(context, "/dashboard");
+      return;
+    }
+
+    setState(() {});
+
+    _startListeners();
+    _startCountdown();
+    _verifyAndStartFeedback();
+  }
+
   Future<void> _verifyAndStartFeedback() async {
+
     if (widget.playSound) {
       await _playAlertSound();
     }
@@ -97,11 +122,10 @@ class _AlertScreenState extends State<AlertScreen> {
     }
   }
 
-  // ============================================================
-  // VIBRATION
-  // ============================================================
   Future<void> _startVibration() async {
+
     final hasVibrator = await Vibration.hasVibrator();
+
     if (hasVibrator != true) return;
 
     Vibration.vibrate(
@@ -114,47 +138,56 @@ class _AlertScreenState extends State<AlertScreen> {
     Vibration.cancel();
   }
 
-  // ============================================================
-  // SOUND
-  // ============================================================
   Future<void> _playAlertSound() async {
+
     await audioPlayer.setReleaseMode(ReleaseMode.loop);
-    await audioPlayer.play(AssetSource("sounds/alert.wav"));
+
+    await audioPlayer.play(
+      AssetSource("sounds/alert.wav"),
+    );
   }
 
   void _stopSound() {
     audioPlayer.stop();
   }
 
-  // ============================================================
-  // COUNTDOWN
-  // ============================================================
   void _startCountdown() {
-    timer = Timer.periodic(const Duration(seconds: 1), (t) {
-      if (seconds > 1) {
-        if (mounted) {
-          setState(() => seconds--);
+
+    timer = Timer.periodic(
+      const Duration(seconds: 1),
+      (t) {
+
+        if (seconds > 1) {
+
+          if (mounted) {
+            setState(() => seconds--);
+          }
+
+        } else {
+
+          t.cancel();
+          _finalizeAlert();
+
         }
-      } else {
-        t.cancel();
-        _finalizeAlert();
-      }
-    });
+
+      },
+    );
   }
 
-  // ============================================================
-  // FIRESTORE LISTENERS
-  // ============================================================
   void _startListeners() {
+
     alertListener = FirebaseFirestore.instance
         .collection("alerts")
         .doc(widget.alertId)
         .snapshots()
         .listen((snap) {
+
       final status = snap.data()?["status"];
+
       if (status == "handled" || status == "cancelled_by_device") {
         _handleExternalCancel();
       }
+
     });
 
     deviceListener = FirebaseFirestore.instance
@@ -162,18 +195,20 @@ class _AlertScreenState extends State<AlertScreen> {
         .doc(widget.deviceId)
         .snapshots()
         .listen((snap) {
+
       final status = snap.data()?["fallStatus"];
+
       if (status == "cancelled_by_device") {
         _handleExternalCancel();
       }
+
     });
   }
 
-  // ============================================================
-  // FINALIZE ALERT
-  // ============================================================
   Future<void> _finalizeAlert() async {
+
     if (handled) return;
+
     handled = true;
 
     _stopSound();
@@ -181,13 +216,17 @@ class _AlertScreenState extends State<AlertScreen> {
     timer?.cancel();
 
     try {
+
       await FirebaseFirestore.instance
           .collection("alerts")
           .doc(widget.alertId)
           .update({
+
         "status": "handled",
         "handled_at": FieldValue.serverTimestamp(),
+
       });
+
     } catch (_) {}
 
     if (!mounted) return;
@@ -198,16 +237,14 @@ class _AlertScreenState extends State<AlertScreen> {
       arguments: {
         "alertId": widget.alertId,
         "fallType": widget.fallType,
-        "lat": widget.showLocation ? widget.lat : null,
-        "lng": widget.showLocation ? widget.lng : null,
+        "lat": lat,
+        "lng": lng,
       },
     );
   }
 
-  // ============================================================
-  // EXTERNAL CANCEL
-  // ============================================================
   void _handleExternalCancel() {
+
     if (handled || redirected) return;
 
     handled = true;
@@ -218,20 +255,24 @@ class _AlertScreenState extends State<AlertScreen> {
     timer?.cancel();
 
     if (!mounted) return;
+
     Navigator.pushReplacementNamed(context, "/dashboard");
   }
 
-  // ============================================================
-  // UI
-  // ============================================================
   @override
   Widget build(BuildContext context) {
+
     return Scaffold(
+
       backgroundColor: const Color(0xFF0A0F1E),
+
       body: Center(
+
         child: Container(
+
           width: 340,
           padding: const EdgeInsets.all(24),
+
           decoration: BoxDecoration(
             color: const Color(0xFF111827),
             borderRadius: BorderRadius.circular(18),
@@ -244,9 +285,11 @@ class _AlertScreenState extends State<AlertScreen> {
               ),
             ],
           ),
+
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
+
               Row(
                 children: const [
                   Icon(Icons.warning_amber_rounded,
@@ -263,14 +306,26 @@ class _AlertScreenState extends State<AlertScreen> {
                 ],
               ),
 
-              const SizedBox(height: 14),
+              const SizedBox(height: 16),
 
-              if (widget.showLocation &&
-                  widget.locationLabel.isNotEmpty)
-                Text(
-                  widget.locationLabel,
-                  style: const TextStyle(color: Colors.white),
-                  textAlign: TextAlign.center,
+              if (lat != null && lng != null)
+                Column(
+                  children: [
+
+                    const Text(
+                      "Device Location",
+                      style: TextStyle(color: Colors.white70),
+                    ),
+
+                    const SizedBox(height: 6),
+
+                    Text(
+                      "$lat , $lng",
+                      style: const TextStyle(color: Colors.white),
+                      textAlign: TextAlign.center,
+                    ),
+
+                  ],
                 ),
 
               const SizedBox(height: 24),
@@ -298,10 +353,13 @@ class _AlertScreenState extends State<AlertScreen> {
               SizedBox(
                 width: double.infinity,
                 child: ElevatedButton(
+
                   onPressed: handled ? null : _finalizeAlert,
+
                   child: Text(
                     handled ? "Sending..." : "Send Now",
                   ),
+
                 ),
               ),
             ],

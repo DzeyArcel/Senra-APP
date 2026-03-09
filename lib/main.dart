@@ -153,37 +153,31 @@ class SenraApp extends StatelessWidget {
       // ============================================================
       // DYNAMIC ROUTES (ALERTS)
       // ============================================================
-      onGenerateRoute: (settings) {
-        if (settings.name == '/alert') {
-          final args = settings.arguments as Map<String, dynamic>? ?? {};
-          return MaterialPageRoute(
-            builder: (_) => AlertScreen(
-              alertId: args['alertId'],
-              deviceId: args['deviceId'],
-              fallType: args['fallType'] ?? 'Fall Detected',
-              vibrate: args['vibrate'] ?? true,
-              playSound: args['playSound'] ?? true,
-              showLocation: args['showLocation'] ?? true,
-              lat: args['lat'] != null
-                  ? double.tryParse(args['lat'].toString())
-                  : null,
-              lng: args['lng'] != null
-                  ? double.tryParse(args['lng'].toString())
-                  : null,
-              locationLabel: args['locationLabel'] ?? '',
-              startSeconds: args['startSeconds'] ?? 30,
-            ),
-          );
-        }
+     onGenerateRoute: (settings) {
+  if (settings.name == '/alert') {
+    final args = settings.arguments as Map<String, dynamic>? ?? {};
 
-        if (settings.name == '/help-notified') {
-          return MaterialPageRoute(
-            builder: (_) => const HelpNotifiedScreen(),
-          );
-        }
+    return MaterialPageRoute(
+      builder: (_) => AlertScreen(
+        alertId: args['alertId'],
+        deviceId: args['deviceId'],
+        fallType: args['fallType'] ?? 'Fall Detected',
+        vibrate: args['vibrate'] ?? true,
+        playSound: args['playSound'] ?? true,
+        showLocation: args['showLocation'] ?? true,
+        startSeconds: args['startSeconds'] ?? 30,
+      ),
+    );
+  }
 
-        return null;
-      },
+  if (settings.name == '/help-notified') {
+    return MaterialPageRoute(
+      builder: (_) => const HelpNotifiedScreen(),
+    );
+  }
+
+  return null;
+}
     );
   }
 }

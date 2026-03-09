@@ -121,30 +121,41 @@ exports.sendFallAlert = onDocumentCreated(
     // 🔔 FCM PAYLOAD
     // --------------------------------------------------
     const payload = {
-      token: caregiver.fcmToken,
+  token: caregiver.fcmToken,
 
-      notification: {
-        title: "🚨 Senra Alert",
-        body:
-          `Possible fall detected\n` +
-          `🕒 ${fallTime}\n` +
-          `📍 ${address}`,
-      },
+  notification: {
+    title: "🚨 Senra Alert",
+    body:
+      `Possible fall detected\n` +
+      `🕒 ${fallTime}\n` +
+      `📍 ${address}`,
+  },
 
-      android: {
-        priority: "high",
-        notification: {
-          channelId: "senra_alerts_v3",
-        },
-      },
+  android: {
+    priority: "high",
+    notification: {
+      channelId: "senra_alerts_v3",
+    },
+  },
 
-      data: {
-        alertId,
-        deviceId,
-        type: "fall_detected",
-        fallTime,
-      },
-    };
+  apns: {
+    payload: {
+      aps: {
+        sound: "default",
+        contentAvailable: true
+      }
+    }
+  },
+
+  data: {
+    alertId,
+    deviceId,
+    type: "fall_detected",
+    fallTime,
+    address,
+    screen: "alert"
+  }
+};
 
     // --------------------------------------------------
     // 🚀 SEND NOTIFICATION
@@ -203,13 +214,42 @@ exports.resolveAddress = onDocumentUpdated(
 
       if (!res.ok) throw new Error();
 
-      const geo = await res.json();
-      const address = geo.display_name || "Unknown location";
+   const geo = await res.json();
+const addr = geo.address || {};
 
-      await getFirestore()
-        .collection("devices")
-        .doc(event.params.deviceId)
-        .update({ address });
+const barangay =
+  addr.suburb ||
+  addr.village ||
+  addr.hamlet ||
+  addr.neighbourhood ||
+  "";
+
+const city =
+  addr.city ||
+  addr.town ||
+  addr.municipality ||
+  addr.county ||
+  "";
+
+const province =
+  addr.state ||
+  addr.region ||
+  "";
+
+const postcode =
+  addr.postcode || "";
+
+const address =
+  [barangay, city, province, postcode]
+    .filter(v => v && v.length > 0)
+    .join(", ");
+
+await getFirestore()
+  .collection("devices")
+  .doc(event.params.deviceId)
+  .update({
+    address: address || "Unknown location"
+  });
     } catch {}
   }
 );

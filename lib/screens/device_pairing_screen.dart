@@ -1,6 +1,7 @@
 // ============================================================
 // DevicePairingScreen.dart — FINAL STABLE VERSION
 // QR FIXED • UID SAFE • ESP32 SAFE • UI UNCHANGED
+// UPDATED: Emergency phone sync for Senra firmware
 // ============================================================
 
 import 'package:flutter/material.dart';
@@ -28,9 +29,6 @@ class _DevicePairingScreenState extends State<DevicePairingScreen> {
   final TextEditingController _deviceIdController = TextEditingController();
   bool _isPairing = false;
 
-  // ======================================================
-  // INIT
-  // ======================================================
   @override
   void initState() {
     super.initState();
@@ -42,7 +40,7 @@ class _DevicePairingScreenState extends State<DevicePairingScreen> {
   }
 
   // ======================================================
-  // 🔥 SEND CAREGIVER UID TO ESP32 (SAFE)
+  // SEND CAREGIVER UID TO ESP32
   // ======================================================
   Future<void> _sendCaregiverUidToDevice(String? deviceIp) async {
     if (deviceIp == null || deviceIp.isEmpty) {
@@ -74,7 +72,7 @@ class _DevicePairingScreenState extends State<DevicePairingScreen> {
   }
 
   // ======================================================
-  // QR SCAN — ONLY FILLS DEVICE ID
+  // QR SCAN
   // ======================================================
   Future<void> _scanQr() async {
     final result = await Navigator.push(
@@ -128,19 +126,21 @@ class _DevicePairingScreenState extends State<DevicePairingScreen> {
 
       // 2️⃣ Block if paired elsewhere
       if (pairedTo.isNotEmpty && pairedTo != caregiverId) {
-  final prefs = await SharedPreferences.getInstance();
-  await prefs.remove("pairedDevice");
-  await prefs.setBool("needsWifiSetup", true);
+        await prefs.remove("pairedDevice");
+        await prefs.setBool("needsWifiSetup", true);
 
-  _toast("This device is already paired to another caregiver.");
-  return;
-}
-
+        _toast("This device is already paired to another caregiver.");
+        return;
+      }
 
       // 3️⃣ Fetch caregiver info
       final caregiverSnap =
           await firestore.collection("caregivers").doc(caregiverId).get();
       final caregiver = caregiverSnap.data() ?? {};
+
+      // 🔹 READ PRIMARY EMERGENCY PHONE
+      final emergencyPhone =
+          (caregiver["primaryEmergencyPhone"] ?? "").toString();
 
       // 4️⃣ Update device
       await firestore.collection("devices").doc(deviceId).set({
@@ -149,10 +149,14 @@ class _DevicePairingScreenState extends State<DevicePairingScreen> {
         "ownerId": caregiverId,
         "ownerName": caregiver["name"] ?? "",
         "ownerPhone": caregiver["phone"] ?? "",
+
+        // ⭐ NEW (FOR ESP32 FALL SMS)
+        "emergencyPhone": emergencyPhone,
+
         "paired_at": FieldValue.serverTimestamp(),
       }, SetOptions(merge: true));
 
-      // 5️⃣ Push UID to ESP32 (if reachable)
+      // 5️⃣ Push UID to ESP32
       await _sendCaregiverUidToDevice(dev["ip"]);
 
       // 6️⃣ Update caregiver
@@ -179,7 +183,6 @@ class _DevicePairingScreenState extends State<DevicePairingScreen> {
     }
   }
 
-  // ======================================================
   void _toast(String msg) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(msg), backgroundColor: Colors.redAccent),
@@ -209,17 +212,17 @@ class _DevicePairingScreenState extends State<DevicePairingScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Row(
-  children: const [
-    Text(
-      "Device Pairing",
-      style: TextStyle(
-        color: Colors.white,
-        fontSize: 18,
-        fontWeight: FontWeight.w600,
-      ),
-    ),
-  ],
-),
+                  children: const [
+                    Text(
+                      "Device Pairing",
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 18,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ),
                 const SizedBox(height: 25),
                 const Text(
                   "Connect Your Senra Wearable",

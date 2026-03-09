@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -10,6 +11,7 @@ class EditContactScreen extends StatefulWidget {
 }
 
 class _EditContactScreenState extends State<EditContactScreen> {
+
   final TextEditingController nameController = TextEditingController();
   final TextEditingController phoneController = TextEditingController();
   final TextEditingController emailController = TextEditingController();
@@ -17,6 +19,7 @@ class _EditContactScreenState extends State<EditContactScreen> {
 
   String caregiverId = "";
   String contactId = "";
+
   bool loading = true;
   bool saving = false;
 
@@ -26,14 +29,40 @@ class _EditContactScreenState extends State<EditContactScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) => _loadFromArgs());
   }
 
-  // ============================================================
-  // LOAD ARGUMENTS + CAREGIVER ID
-  // ============================================================
+  // ------------------------------------------------------------
+  // NORMALIZE PH NUMBER
+  // ------------------------------------------------------------
+
+  String normalizePHNumber(String phone) {
+
+    phone = phone.trim();
+
+    if (phone.startsWith("09")) {
+      return "+63${phone.substring(1)}";
+    }
+
+    if (phone.startsWith("639")) {
+      return "+$phone";
+    }
+
+    if (phone.startsWith("+63")) {
+      return phone;
+    }
+
+    return phone;
+  }
+
+  // ------------------------------------------------------------
+  // LOAD CONTACT DATA
+  // ------------------------------------------------------------
+
   Future<void> _loadFromArgs() async {
+
     final args =
         ModalRoute.of(context)?.settings.arguments as Map<String, dynamic>?;
 
     contactId = args?["contactId"] ?? "";
+
     nameController.text = args?["name"] ?? "";
     phoneController.text = args?["phone"] ?? "";
     emailController.text = args?["email"] ?? "";
@@ -45,139 +74,145 @@ class _EditContactScreenState extends State<EditContactScreen> {
     setState(() => loading = false);
   }
 
-  // ============================================================
-  // STEP 2 — SYNC EMERGENCY PHONE TO DEVICE DOC
-  // ============================================================
-  Future<void> _syncEmergencyPhoneToDevice(String phone) async {
+  // ------------------------------------------------------------
+  // SYNC CONTACTS TO DEVICE
+  // ------------------------------------------------------------
+
+  Future<void> _syncDeviceNumbers() async {
+
     final prefs = await SharedPreferences.getInstance();
     final deviceId = prefs.getString("pairedDevice");
 
     if (deviceId == null || deviceId.isEmpty) return;
 
+    final contacts = await FirebaseFirestore.instance
+        .collection("caregivers")
+        .doc(caregiverId)
+        .collection("contacts")
+        .limit(2)
+        .get();
+
+    String ownerPhone = "";
+    String emergencyPhone = "";
+
+    if (contacts.docs.isNotEmpty) {
+      ownerPhone = contacts.docs[0]["phone"];
+    }
+
+    if (contacts.docs.length > 1) {
+      emergencyPhone = contacts.docs[1]["phone"];
+    }
+
     await FirebaseFirestore.instance
         .collection("devices")
         .doc(deviceId)
         .set({
-      "emergencyPhone": phone,
+      "ownerPhone": ownerPhone,
+      "emergencyPhone": emergencyPhone,
       "updatedAt": FieldValue.serverTimestamp(),
     }, SetOptions(merge: true));
   }
 
-  // ============================================================
-  // SAVE CONTACT CHANGES
-  // ============================================================
+  // ------------------------------------------------------------
+  // SAVE CHANGES
+  // ------------------------------------------------------------
+
   Future<void> _saveChanges() async {
+
     if (caregiverId.isEmpty || contactId.isEmpty) return;
 
     final name = nameController.text.trim();
-    final phone = phoneController.text.trim();
+    String phone = phoneController.text.trim();
     final email = emailController.text.trim();
     final relation = relationController.text.trim();
 
     if (name.isEmpty || phone.isEmpty || relation.isEmpty) {
+
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text("Name, phone, and relationship are required."),
+          content: Text("Name, phone and relationship are required."),
           backgroundColor: Colors.redAccent,
         ),
       );
+
       return;
     }
+
+    phone = normalizePHNumber(phone);
 
     setState(() => saving = true);
 
     try {
-      // 1️⃣ SAVE TO CAREGIVER CONTACTS (APP SOURCE OF TRUTH)
+
       await FirebaseFirestore.instance
           .collection("caregivers")
           .doc(caregiverId)
           .collection("contacts")
           .doc(contactId)
           .update({
+
         "name": name,
         "phone": phone,
         "email": email,
         "relation": relation,
-        "updated_at": FieldValue.serverTimestamp(),
+        "updatedAt": FieldValue.serverTimestamp(),
+
       });
 
-      // 2️⃣ MIRROR PHONE TO DEVICE DOC (FOR FIRMWARE)
-      await _syncEmergencyPhoneToDevice(phone);
+      await _syncDeviceNumbers();
 
       if (!mounted) return;
       Navigator.pop(context);
+
     } catch (e) {
+
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text("Failed to save changes."),
           backgroundColor: Colors.redAccent,
         ),
       );
+
     }
 
     if (mounted) setState(() => saving = false);
   }
 
-  // ============================================================
+  // ------------------------------------------------------------
   // DELETE CONTACT
-  // ============================================================
+  // ------------------------------------------------------------
+
   Future<void> _deleteContact() async {
+
     if (caregiverId.isEmpty || contactId.isEmpty) return;
 
     final confirm = await showDialog<bool>(
       context: context,
-      builder: (context) => AlertDialog(
+      builder: (_) => AlertDialog(
         backgroundColor: const Color(0xFF162233),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: const Center(
-          child: Text(
-            "Delete Contact?",
-            style: TextStyle(
-              color: Colors.white,
-              fontWeight: FontWeight.w700,
-              fontSize: 18,
-            ),
-          ),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+        ),
+        title: const Text(
+          "Delete Contact?",
+          style: TextStyle(color: Colors.white),
         ),
         content: const Text(
-          "This emergency contact will be permanently removed.",
-          textAlign: TextAlign.center,
-          style: TextStyle(color: Colors.white70, fontSize: 13),
+          "This emergency contact will be removed.",
+          style: TextStyle(color: Colors.white70),
         ),
-        actionsAlignment: MainAxisAlignment.center,
         actions: [
-          GestureDetector(
-            onTap: () => Navigator.pop(context, true),
-            child: Container(
-              padding: const EdgeInsets.symmetric(vertical: 14),
-              decoration: BoxDecoration(
-                color: Colors.redAccent,
-                borderRadius: BorderRadius.circular(10),
-              ),
-              child: const Center(
-                child: Text(
-                  "Delete Contact",
-                  style:
-                      TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
-                ),
-              ),
-            ),
+
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text("Cancel"),
           ),
-          const SizedBox(height: 10),
-          GestureDetector(
-            onTap: () => Navigator.pop(context, false),
-            child: Container(
-              padding: const EdgeInsets.symmetric(vertical: 14),
-              decoration: BoxDecoration(
-                color: const Color(0xFF223247),
-                borderRadius: BorderRadius.circular(10),
-              ),
-              child: const Center(
-                child: Text(
-                  "Cancel",
-                  style: TextStyle(color: Colors.white70),
-                ),
-              ),
+
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text(
+              "Delete",
+              style: TextStyle(color: Colors.redAccent),
             ),
           ),
         ],
@@ -193,15 +228,19 @@ class _EditContactScreenState extends State<EditContactScreen> {
         .doc(contactId)
         .delete();
 
+    await _syncDeviceNumbers();
+
     if (!mounted) return;
     Navigator.pop(context);
   }
 
-  // ============================================================
+  // ------------------------------------------------------------
   // UI
-  // ============================================================
+  // ------------------------------------------------------------
+
   @override
   Widget build(BuildContext context) {
+
     if (loading) {
       return const Scaffold(
         backgroundColor: Color(0xFF0E1625),
@@ -212,21 +251,29 @@ class _EditContactScreenState extends State<EditContactScreen> {
     }
 
     return Scaffold(
+
       backgroundColor: const Color(0xFF0E1625),
+
       body: SafeArea(
+
         child: SingleChildScrollView(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+
+          padding: const EdgeInsets.all(16),
+
           child: Column(
+
             crossAxisAlignment: CrossAxisAlignment.start,
+
             children: [
+
               Row(
                 children: [
+
                   IconButton(
                     onPressed: () => Navigator.pop(context),
-                    icon: const Icon(Icons.arrow_back,
-                        color: Colors.white70, size: 22),
+                    icon: const Icon(Icons.arrow_back,color: Colors.white70),
                   ),
-                  const SizedBox(width: 6),
+
                   const Text(
                     "Edit Contact",
                     style: TextStyle(
@@ -237,89 +284,49 @@ class _EditContactScreenState extends State<EditContactScreen> {
                   ),
                 ],
               ),
-              const SizedBox(height: 6),
-              const Text(
-                "Update emergency contact information",
-                style: TextStyle(color: Colors.white70, fontSize: 13),
-              ),
-              const SizedBox(height: 20),
-
-              Container(
-                padding: const EdgeInsets.all(18),
-                decoration: BoxDecoration(
-                  color: const Color(0xFF162233),
-                  borderRadius: BorderRadius.circular(14),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    _label("Full Name *"),
-                    _inputField(controller: nameController),
-                    const SizedBox(height: 16),
-
-                    _label("Phone Number *"),
-                    _inputField(controller: phoneController),
-                    const SizedBox(height: 16),
-
-                    _label("Email Address"),
-                    _inputField(controller: emailController),
-                    const SizedBox(height: 16),
-
-                    _label("Relationship *"),
-                    _inputField(controller: relationController),
-                  ],
-                ),
-              ),
 
               const SizedBox(height: 20),
+
+              _label("Full Name *"),
+              _inputField(nameController),
+
+              const SizedBox(height: 16),
+
+              _label("Phone Number *"),
+              _inputField(phoneController,isPhone:true),
+
+              const SizedBox(height: 16),
+
+              _label("Email"),
+              _inputField(emailController),
+
+              const SizedBox(height: 16),
+
+              _label("Relationship *"),
+              _inputField(relationController),
+
+              const SizedBox(height: 24),
 
               Row(
                 children: [
+
                   Expanded(
-                    child: GestureDetector(
-                      onTap: saving ? null : _saveChanges,
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(vertical: 14),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFF33B5FF),
-                          borderRadius: BorderRadius.circular(10),
-                        ),
-                        child: Center(
-                          child: Text(
-                            saving ? "Saving..." : "Save Changes",
-                            style: const TextStyle(
-                                color: Colors.black87,
-                                fontWeight: FontWeight.w600),
-                          ),
-                        ),
-                      ),
+                    child: ElevatedButton(
+                      onPressed: saving ? null : _saveChanges,
+                      child: Text(saving ? "Saving..." : "Save Changes"),
                     ),
                   ),
-                  const SizedBox(width: 12),
+
+                  const SizedBox(width: 10),
+
                   Expanded(
-                    child: GestureDetector(
-                      onTap: _deleteContact,
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(vertical: 14),
-                        decoration: BoxDecoration(
-                          border: Border.all(color: Colors.redAccent),
-                          borderRadius: BorderRadius.circular(10),
-                        ),
-                        child: const Center(
-                          child: Text(
-                            "Delete Contact",
-                            style: TextStyle(
-                                color: Colors.redAccent,
-                                fontWeight: FontWeight.w600),
-                          ),
-                        ),
-                      ),
+                    child: OutlinedButton(
+                      onPressed: _deleteContact,
+                      child: const Text("Delete Contact"),
                     ),
                   ),
                 ],
               ),
-
-              const SizedBox(height: 40),
             ],
           ),
         ),
@@ -327,28 +334,38 @@ class _EditContactScreenState extends State<EditContactScreen> {
     );
   }
 
-  // ============================================================
-  // UI HELPERS
-  // ============================================================
   Widget _label(String text) {
+
     return Padding(
       padding: const EdgeInsets.only(bottom: 6),
       child: Text(
         text,
-        style: const TextStyle(color: Colors.white70, fontSize: 13),
+        style: const TextStyle(color: Colors.white70),
       ),
     );
   }
 
-  Widget _inputField({required TextEditingController controller}) {
+  Widget _inputField(TextEditingController controller,{bool isPhone=false}) {
+
     return Container(
+
       decoration: BoxDecoration(
         color: const Color(0xFF101B2C),
         borderRadius: BorderRadius.circular(10),
       ),
+
       child: TextField(
+
         controller: controller,
+
         style: const TextStyle(color: Colors.white),
+
+        keyboardType:
+            isPhone ? TextInputType.phone : TextInputType.text,
+
+        inputFormatters:
+            isPhone ? [FilteringTextInputFormatter.digitsOnly] : [],
+
         decoration: const InputDecoration(
           border: InputBorder.none,
           contentPadding:

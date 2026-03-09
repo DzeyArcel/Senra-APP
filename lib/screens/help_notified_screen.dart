@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:lucide_icons/lucide_icons.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 class HelpNotifiedScreen extends StatelessWidget {
   const HelpNotifiedScreen({super.key});
@@ -39,7 +40,6 @@ class HelpNotifiedScreen extends StatelessWidget {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              // SUCCESS ICON
               Container(
                 padding: const EdgeInsets.all(22),
                 decoration: BoxDecoration(
@@ -83,7 +83,10 @@ class HelpNotifiedScreen extends StatelessWidget {
 
               if (location != null) ...[
                 const SizedBox(height: 14),
-                _infoRow(Icons.location_on, "Location", location),
+                GestureDetector(
+                  onTap: () => _openMap(context, location),
+                  child: _infoRow(Icons.location_on, "Location", location),
+                ),
               ],
 
               if (address != null) ...[
@@ -168,9 +171,36 @@ class HelpNotifiedScreen extends StatelessWidget {
     );
   }
 
-  // ============================================================
-  // UI HELPERS
-  // ============================================================
+  static Future<void> _openMap(BuildContext context, String location) async {
+    try {
+      final parts = location.split(',');
+
+      if (parts.length != 2) {
+        _showError(context, "Invalid location format.");
+        return;
+      }
+
+      final lat = parts[0].trim();
+      final lon = parts[1].trim();
+
+      final url = Uri.parse(
+          "https://www.openstreetmap.org/?mlat=$lat&mlon=$lon#map=18/$lat/$lon");
+
+      if (await canLaunchUrl(url)) {
+        await launchUrl(url, mode: LaunchMode.externalApplication);
+      } else {
+        _showError(context, "Unable to open OpenStreetMap.");
+      }
+    } catch (e) {
+      _showError(context, "Error opening the map.");
+    }
+  }
+
+  static void _showError(BuildContext context, String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message)),
+    );
+  }
 
   static Widget _infoRow(
     IconData icon,
@@ -198,6 +228,8 @@ class HelpNotifiedScreen extends StatelessWidget {
   }
 
   static Widget _contactTile(Map<String, String> c) {
+    final status = c['status'] ?? "Sending";
+
     return Container(
       width: double.infinity,
       margin: const EdgeInsets.only(bottom: 12),
@@ -233,16 +265,20 @@ class HelpNotifiedScreen extends StatelessWidget {
               ],
             ),
           ),
-          const Text(
-            "Notified",
-            style: TextStyle(
-              color: Color(0xFF33B5FF),
-              fontWeight: FontWeight.w700,
-              fontSize: 13,
-            ),
-          ),
+          _statusIcon(status),
         ],
       ),
     );
+  }
+
+  static Widget _statusIcon(String status) {
+    switch (status) {
+      case "SMS Sent":
+        return const Icon(Icons.check_circle, color: Colors.green, size: 18);
+      case "Failed":
+        return const Icon(Icons.cancel, color: Colors.red, size: 18);
+      default:
+        return const Icon(Icons.hourglass_top, color: Colors.orange, size: 18);
+    }
   }
 }

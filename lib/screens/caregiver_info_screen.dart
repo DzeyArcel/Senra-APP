@@ -19,28 +19,29 @@ class _CaregiverInfoScreenState extends State<CaregiverInfoScreen> {
   bool isSaving = false;
   bool showEmergencyFields = false;
 
-  // =============================================================
-  // 🇵🇭 PH PHONE NORMALIZER (STORES AS 09XXXXXXXXX)
-  // =============================================================
+  // PH PHONE NORMALIZER → +639XXXXXXXXX
   String? normalizePH(String input) {
     input = input.replaceAll(" ", "");
 
-    if (RegExp(r'^09\d{9}$').hasMatch(input)) return input;
-    if (RegExp(r'^\+639\d{9}$').hasMatch(input)) {
-      return "0${input.substring(3)}";
+    if (RegExp(r'^09\d{9}$').hasMatch(input)) {
+      return "+63${input.substring(1)}";
     }
+
     if (RegExp(r'^639\d{9}$').hasMatch(input)) {
-      return "0${input.substring(2)}";
+      return "+$input";
     }
+
+    if (RegExp(r'^\+639\d{9}$').hasMatch(input)) {
+      return input;
+    }
+
     if (RegExp(r'^9\d{9}$').hasMatch(input)) {
-      return "0$input";
+      return "+63$input";
     }
+
     return null;
   }
 
-  // =============================================================
-  // SAVE CAREGIVER PROFILE (CLEAN + SINGLE SOURCE)
-  // =============================================================
   Future<void> saveCaregiverInfo() async {
     if (isSaving) return;
 
@@ -54,14 +55,13 @@ class _CaregiverInfoScreenState extends State<CaregiverInfoScreen> {
       return _error("Please enter your name.");
     }
 
-    // Step 1 — reveal emergency section
     if (!showEmergencyFields) {
       setState(() => showEmergencyFields = true);
       _error("Emergency contact is required to continue.");
       return;
     }
 
-    final emergencyPhone = normalizePH(emergencyPhone1.text);
+    final emergencyPhone = normalizePH(emergencyPhone1.text.trim());
     final emergencyName = emergencyName1.text.trim();
 
     if (emergencyName.isEmpty || emergencyPhone == null) {
@@ -74,25 +74,22 @@ class _CaregiverInfoScreenState extends State<CaregiverInfoScreen> {
       final firestore = FirebaseFirestore.instance;
       final uid = user.uid;
 
-      // ---------------------------------------------------------
-      // CAREGIVER PROFILE (NO EMERGENCY DATA HERE)
-      // ---------------------------------------------------------
+      // SAVE CAREGIVER PROFILE
       await firestore.collection("caregivers").doc(uid).set({
         "name": name,
         "phone": user.phoneNumber ?? "",
         "locationSharing": true,
         "pushNotifications": true,
         "emergencyVibration": true,
-
-        // pointer only
         "primaryContactId": "primary",
+
+        // used later for device sync
+        "primaryEmergencyPhone": emergencyPhone,
 
         "updatedAt": FieldValue.serverTimestamp(),
       }, SetOptions(merge: true));
 
-      // ---------------------------------------------------------
-      // EMERGENCY CONTACT (SINGLE SOURCE OF TRUTH)
-      // ---------------------------------------------------------
+      // SAVE PRIMARY CONTACT
       await firestore
           .collection("caregivers")
           .doc(uid)
@@ -101,17 +98,18 @@ class _CaregiverInfoScreenState extends State<CaregiverInfoScreen> {
           .set({
         "name": emergencyName,
         "phone": emergencyPhone,
-        "added_at": FieldValue.serverTimestamp(),
+        "isPrimary": true,
+        "addedAt": FieldValue.serverTimestamp(),
+        "updatedAt": FieldValue.serverTimestamp(),
       });
 
       if (!mounted) return;
 
-      // ---------------------------------------------------------
-      // CONTINUE TO DEVICE PAIRING
-      // ---------------------------------------------------------
       Navigator.pushReplacement(
         context,
-        MaterialPageRoute(builder: (_) => const DevicePairingScreen()),
+        MaterialPageRoute(
+          builder: (_) => const DevicePairingScreen(),
+        ),
       );
     } catch (e) {
       debugPrint("Caregiver save failed: $e");
@@ -121,22 +119,19 @@ class _CaregiverInfoScreenState extends State<CaregiverInfoScreen> {
     if (mounted) setState(() => isSaving = false);
   }
 
-  // =============================================================
-  // ERROR HANDLER
-  // =============================================================
   void _error(String msg) {
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(msg), backgroundColor: Colors.redAccent),
+      SnackBar(
+        content: Text(msg),
+        backgroundColor: Colors.redAccent,
+      ),
     );
   }
 
-  // =============================================================
-  // UI (LOCKED ONBOARDING)
-  // =============================================================
   @override
   Widget build(BuildContext context) {
     return WillPopScope(
-      onWillPop: () async => false, // 🔒 block back navigation
+      onWillPop: () async => false,
       child: Scaffold(
         backgroundColor: const Color(0xFF0E1625),
         body: SafeArea(
@@ -166,8 +161,8 @@ class _CaregiverInfoScreenState extends State<CaregiverInfoScreen> {
                               fontWeight: FontWeight.w700,
                             ),
                           ),
-
                           const SizedBox(height: 20),
+
                           _label("Your Name"),
                           _input(nameController, "Your Name"),
 
@@ -221,18 +216,18 @@ class _CaregiverInfoScreenState extends State<CaregiverInfoScreen> {
     );
   }
 
-  // =============================================================
-  // UI HELPERS
-  // =============================================================
-  Widget _label(String text) => Padding(
-        padding: const EdgeInsets.only(bottom: 6),
-        child: Text(
-          text,
-          style: const TextStyle(color: Colors.white70, fontSize: 14),
-        ),
-      );
+  Widget _label(String text) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: Text(
+        text,
+        style: const TextStyle(color: Colors.white70, fontSize: 14),
+      ),
+    );
+  }
 
-  Widget _input(TextEditingController c, String hint) {
+  Widget _input(TextEditingController c, String hint,
+      {bool isPhone = false}) {
     return Container(
       decoration: BoxDecoration(
         color: const Color(0xFF101B2C),
@@ -240,6 +235,7 @@ class _CaregiverInfoScreenState extends State<CaregiverInfoScreen> {
       ),
       child: TextField(
         controller: c,
+        keyboardType: isPhone ? TextInputType.phone : TextInputType.text,
         style: const TextStyle(color: Colors.white),
         decoration: InputDecoration(
           hintText: hint,
@@ -276,11 +272,10 @@ class _CaregiverInfoScreenState extends State<CaregiverInfoScreen> {
             children: [
               _input(emergencyName1, "Contact Name"),
               const SizedBox(height: 10),
-              _input(emergencyPhone1, "09XXXXXXXXX"),
+              _input(emergencyPhone1, "09XXXXXXXXX", isPhone: true),
             ],
           ),
         ),
-
         const SizedBox(height: 24),
       ],
     );
