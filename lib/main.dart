@@ -35,102 +35,187 @@ import 'screens/alert_screen.dart';
 import 'screens/help_notified_screen.dart';
 import 'screens/waiting_for_ap_screen.dart';
 
-
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 
 Future<void> main() async {
+
   WidgetsFlutterBinding.ensureInitialized();
 
-  // 🔥 Firebase init
   await Firebase.initializeApp(
     options: DefaultFirebaseOptions.currentPlatform,
   );
 
-  // 🔔 REQUIRED for background & killed notifications
   FirebaseMessaging.onBackgroundMessage(senraBgHandler);
 
-  // 🔔 REQUIRED notification channel
   await setupNotificationChannel();
 
-  // 🔔 Android 13+ permission
   await FirebaseMessaging.instance.requestPermission(
     alert: true,
     badge: true,
     sound: true,
   );
 
-  // 🔔 Foreground heads-up permission
   await FirebaseMessaging.instance.setForegroundNotificationPresentationOptions(
     alert: true,
     badge: true,
     sound: true,
   );
 
-  // ============================================================
-  // 🔥 FCM TOKEN REGISTER & REFRESH (CRITICAL — SAFE)
-  // ============================================================
   final messaging = FirebaseMessaging.instance;
 
-  // Get current token
+  // ============================================================
+  // FCM TOKEN REGISTER
+  // ============================================================
+
   final token = await messaging.getToken();
   debugPrint("📲 FCM TOKEN: $token");
 
   if (token != null) {
+
     final user = FirebaseAuth.instance.currentUser;
+
     if (user != null) {
       await FirebaseFirestore.instance
           .collection("caregivers")
           .doc(user.uid)
-          .update({
+          .set({
         "fcmToken": token,
-      });
-
-      debugPrint("✅ FCM token saved");
+      }, SetOptions(merge: true));
     }
   }
 
-  // Listen for token refresh
+  // ============================================================
+  // TOKEN REFRESH
+  // ============================================================
+
   FirebaseMessaging.instance.onTokenRefresh.listen((newToken) async {
-    debugPrint("🔁 FCM token refreshed: $newToken");
 
     final user = FirebaseAuth.instance.currentUser;
+
     if (user != null) {
+
       await FirebaseFirestore.instance
           .collection("caregivers")
           .doc(user.uid)
-          .update({
+          .set({
         "fcmToken": newToken,
-      });
-
-      debugPrint("✅ Refreshed token saved");
+      }, SetOptions(merge: true));
     }
+
   });
+
+  // ============================================================
+  // FOREGROUND NOTIFICATION
+  // ============================================================
+
+  FirebaseMessaging.onMessage.listen((RemoteMessage message) {
+
+    debugPrint("🚨 FALL ALERT RECEIVED");
+
+    final data = message.data;
+
+    if (data['alertId'] == null) return;
+
+    final notification = message.notification;
+
+    if (notification != null) {
+
+      showLocalNotification(
+        title: notification.title ?? "Senra Alert",
+        body: notification.body ?? "A fall was detected.",
+        payload: data['alertId'],
+      );
+
+    }
+
+    navigatorKey.currentState?.pushReplacementNamed(
+  '/alert',
+  arguments: {
+    "alertId": data['alertId'],
+    "deviceId": data['deviceId'],
+    "fallType": "Fall Detected",
+    "vibrate": true,
+    "playSound": true,
+    "showLocation": true,
+    "startSeconds": 8,
+  },
+);
+
+  });
+
+  // ============================================================
+  // NOTIFICATION CLICK (APP BACKGROUND)
+  // ============================================================
+
+  FirebaseMessaging.onMessageOpenedApp.listen((RemoteMessage message) {
+
+    final data = message.data;
+
+    navigatorKey.currentState?.pushReplacementNamed(
+  '/alert',
+  arguments: {
+    "alertId": data['alertId'],
+    "deviceId": data['deviceId'],
+    "fallType": "Fall Detected",
+    "vibrate": true,
+    "playSound": true,
+    "showLocation": true,
+    "startSeconds": 8,
+  },
+);
+  });
+
+  // ============================================================
+  // NOTIFICATION CLICK (APP CLOSED)
+  // ============================================================
+
+  RemoteMessage? initialMessage =
+      await FirebaseMessaging.instance.getInitialMessage();
+
+  if (initialMessage != null) {
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+
+      navigatorKey.currentState?.pushReplacementNamed(
+  '/alert',
+  arguments: {
+    "alertId": initialMessage.data['alertId'],
+    "deviceId": initialMessage.data['deviceId'],
+    "fallType": "Fall Detected",
+    "vibrate": true,
+    "playSound": true,
+    "showLocation": true,
+    "startSeconds": 8,
+  },
+);
+    });
+  }
 
   runApp(const SenraApp());
 }
 
 class SenraApp extends StatelessWidget {
+
   const SenraApp({super.key});
 
   @override
   Widget build(BuildContext context) {
+
     return MaterialApp(
+
       navigatorKey: navigatorKey,
       debugShowCheckedModeBanner: false,
 
-      // 🔥 StartupRouter runs ONCE
       initialRoute: '/startup',
 
-      // ============================================================
-      // STATIC ROUTES
-      // ============================================================
       routes: {
+
         '/startup': (_) => const StartupRouter(),
         '/welcome': (_) => const WelcomeScreen(),
         '/phone-auth': (_) => const PhoneAuthScreen(),
         '/caregiver-info': (_) => const CaregiverInfoScreen(),
 
-        // 🔗 DEVICE FLOW
+        // DEVICE FLOW
         '/device-pairing': (_) => const DevicePairingScreen(),
         '/device-found': (_) => const DeviceFoundScreen(),
         '/device-connected': (_) => const DeviceConnectedScreen(),
@@ -139,7 +224,7 @@ class SenraApp extends StatelessWidget {
         '/wifi-config': (_) => const WifiConfigScreen(),
         '/all-set': (_) => const AllSetScreen(),
 
-        // 🏠 MAIN
+        // MAIN
         '/dashboard': (_) => const DashboardScreen(),
         '/settings': (_) => const SettingsScreen(),
         '/manage-device': (_) => const ManageDeviceScreen(),
@@ -148,36 +233,42 @@ class SenraApp extends StatelessWidget {
         '/location-tracking': (_) => const LocationTrackingScreen(),
         '/emergency-contacts': (_) => const EmergencyContactsScreen(),
         '/edit-contact': (_) => const EditContactScreen(),
+
       },
 
       // ============================================================
-      // DYNAMIC ROUTES (ALERTS)
+      // DYNAMIC ROUTES
       // ============================================================
-     onGenerateRoute: (settings) {
-  if (settings.name == '/alert') {
-    final args = settings.arguments as Map<String, dynamic>? ?? {};
 
-    return MaterialPageRoute(
-      builder: (_) => AlertScreen(
-        alertId: args['alertId'],
-        deviceId: args['deviceId'],
-        fallType: args['fallType'] ?? 'Fall Detected',
-        vibrate: args['vibrate'] ?? true,
-        playSound: args['playSound'] ?? true,
-        showLocation: args['showLocation'] ?? true,
-        startSeconds: args['startSeconds'] ?? 30,
-      ),
-    );
-  }
+      onGenerateRoute: (settings) {
 
-  if (settings.name == '/help-notified') {
-    return MaterialPageRoute(
-      builder: (_) => const HelpNotifiedScreen(),
-    );
-  }
+        if (settings.name == '/alert') {
 
-  return null;
-}
+          final args = settings.arguments as Map<String, dynamic>? ?? {};
+
+          return MaterialPageRoute(
+            builder: (_) => AlertScreen(
+              alertId: args['alertId'],
+              deviceId: args['deviceId'],
+              fallType: args['fallType'] ?? 'Fall Detected',
+              vibrate: args['vibrate'] ?? true,
+              playSound: args['playSound'] ?? true,
+              showLocation: args['showLocation'] ?? true,
+              startSeconds: args['startSeconds'] ?? 8,
+            ),
+          );
+
+        }
+
+        if (settings.name == '/help-notified') {
+          return MaterialPageRoute(
+            builder: (_) => const HelpNotifiedScreen(),
+          );
+        }
+
+        return null;
+      },
+
     );
   }
 }

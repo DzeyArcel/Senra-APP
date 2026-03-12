@@ -366,34 +366,36 @@ class _LocationTrackingScreenState extends State<LocationTrackingScreen> {
     );
   }
 
-  Widget _howItWorks() {
-    return Container(
-      padding: const EdgeInsets.all(18),
-      decoration: BoxDecoration(
-        color: const Color(0xFF162233),
-        borderRadius: BorderRadius.circular(18),
-      ),
-      child: const Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            "How location works",
-            style: TextStyle(
-              color: Color(0xFF33B5FF),
-              fontWeight: FontWeight.w700,
-              fontSize: 16,
-            ),
+Widget _howItWorks() {
+  return Container(
+    width: double.infinity,
+    padding: const EdgeInsets.all(18),
+    decoration: BoxDecoration(
+      color: const Color(0xFF162233),
+      borderRadius: BorderRadius.circular(18),
+    ),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: const [
+        Text(
+          "How location works",
+          style: TextStyle(
+            color: Color(0xFF33B5FF),
+            fontWeight: FontWeight.w700,
+            fontSize: 16,
           ),
-          SizedBox(height: 14),
-          _Bullet("Shared only during emergencies"),
-          _Bullet("Accuracy improves outdoors"),
-          _Bullet("First GPS lock may take a few minutes"),
-          _Bullet("Can be disabled anytime in Settings"),
-          _Bullet("Privacy-first by design"),
-        ],
-      ),
-    );
-  }
+        ),
+        SizedBox(height: 14),
+
+        _Bullet("Shared only during emergencies"),
+        _Bullet("Accuracy improves outdoors"),
+        _Bullet("First GPS lock may take a few minutes"),
+        _Bullet("Can be disabled anytime in Settings"),
+        _Bullet("Privacy-first by design"),
+      ],
+    ),
+  );
+}
 
   // ==========================================================
   // HELPERS
@@ -505,11 +507,29 @@ class _Bullet extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.only(bottom: 6),
-      child: Text(
-        "• $text",
-        style: const TextStyle(
-            color: Colors.white70, fontSize: 13),
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            "• ",
+            style: TextStyle(
+              color: Colors.white70,
+              fontSize: 14,
+              height: 1.4,
+            ),
+          ),
+          Expanded(
+            child: Text(
+              text,
+              style: const TextStyle(
+                color: Colors.white70,
+                fontSize: 13,
+                height: 1.4,
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }

@@ -1,6 +1,7 @@
 // ***************************************************************
 // SENRA APP — DASHBOARD (UI/UX FIXED, LOGIC SAFE)
 // Fully compatible with StartupRouter, AlertScreen, FW V17.3
+// PRODUCTION UPDATE: Improved status logic, reliability, emergency handling
 // ***************************************************************
 
 import 'dart:async';
@@ -18,7 +19,8 @@ class DashboardScreen extends StatefulWidget {
   State<DashboardScreen> createState() => _DashboardScreenState();
 }
 
-class _DashboardScreenState extends State<DashboardScreen> {
+class _DashboardScreenState extends State<DashboardScreen>
+    with WidgetsBindingObserver {
   String? deviceId;
   String caregiverId = "";
   String cleanDeviceId = "";
@@ -28,23 +30,46 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   StreamSubscription? alertListener;
   StreamSubscription? privacyListener;
+  StreamSubscription? deviceListener;
   bool alertOpened = false;
+  String? lastProcessedAlertId;
+
+  
+
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _loadIds();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    alertListener?.cancel();
+    privacyListener?.cancel();
+    deviceListener?.cancel();
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // Refresh status when app resumes to catch up on missed updates
+    if (state == AppLifecycleState.resumed && mounted && cleanDeviceId.isNotEmpty) {
+      _refreshDeviceStatus();
+    }
   }
 
   // ---------------------------------------------------------------
   // LOAD IDS
-  // ---------------------------------------------------------------
+  // ------------------------------------------------------------------
   Future<void> _loadIds() async {
     final prefs = await SharedPreferences.getInstance();
     final user = FirebaseAuth.instance.currentUser;
 
     if (user == null) {
-      Navigator.pushReplacementNamed(context, "/welcome");
+      if (mounted) Navigator.pushReplacementNamed(context, "/welcome");
       return;
     }
 
@@ -52,7 +77,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     deviceId = prefs.getString("pairedDevice") ?? "";
 
     if (deviceId!.isEmpty) {
-      Navigator.pushReplacementNamed(context, "/device-pairing");
+      if (mounted) Navigator.pushReplacementNamed(context, "/device-pairing");
       return;
     }
 
@@ -60,15 +85,17 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
     await NotificationInitializer.init();
     _syncPrivacySettings();
+ 
 
     Future.delayed(const Duration(milliseconds: 350), () {
-      if (mounted) _listenToAlerts();
+      if (mounted);
     });
 
-    setState(() {});
+    if (mounted) setState(() {});
   }
 
-  // ---------------------------------------------------------------
+
+  // ------------------------------------------------------------------
   void _syncPrivacySettings() {
     privacyListener?.cancel();
 
@@ -87,74 +114,63 @@ class _DashboardScreenState extends State<DashboardScreen> {
     });
   }
 
-  // ---------------------------------------------------------------
-  void _listenToAlerts() {
-    alertListener = FirebaseFirestore.instance
-        .collection("alerts")
-        .where("deviceId", isEqualTo: cleanDeviceId)
-        .where("status", isEqualTo: "pending")
-        .snapshots()
-        .listen((snap) async {
-      if (snap.docs.isEmpty) return;
 
-      final doc = snap.docs.first;
-      final data = doc.data();
-
-      if (doc.metadata.hasPendingWrites) return;
-      if (data["delivered"] == true) return;
-      if (data["status"] == "handled") return;
-      if (data["status"] == "cancelled_by_device") return;
-      if (alertOpened) return;
-
-      alertOpened = true;
-
-      try {
-        if (allowVibration) {
-          HapticFeedback.heavyImpact();
-        }
-
-        await FirebaseFirestore.instance
-            .collection("alerts")
-            .doc(doc.id)
-            .update({"delivered": true});
-
-        await Navigator.pushNamed(
-          context,
-          "/alert",
-          arguments: {
-            "alertId": doc.id,
-            "deviceId": cleanDeviceId,
-            "fallType": "Fall Detected",
-            "startSeconds": 8,
-          },
-        );
-      } finally {
-        alertOpened = false;
-      }
-    });
-  }
-
-  // ---------------------------------------------------------------
   bool _isOnline(Map<String, dynamic> data) {
+    // If resetting, consider offline
     if (data["status"] == "resetting") return false;
 
     final rawSync = data["lastSync"];
     DateTime? t;
 
-    if (rawSync is Timestamp) t = rawSync.toDate();
-    if (rawSync is String) t = DateTime.tryParse(rawSync);
+    // Support both Timestamp and ISO string formats, convert to UTC
+    if (rawSync is Timestamp) {
+      t = rawSync.toDate().toUtc();
+    } else if (rawSync is String) {
+      final parsed = DateTime.tryParse(rawSync);
+      if (parsed != null) t = parsed.toUtc();
+    }
+
     if (t == null) return false;
 
-    final diff = DateTime.now().toUtc().difference(t.toUtc()).inSeconds;
-    return diff <= 120;
+    final now = DateTime.now().toUtc();
+    final diff = now.difference(t).inSeconds;
+    
+    // Device offline if last sync is older than 90 seconds
+    return diff <= 90;
   }
 
-  bool _effectiveOnline(bool online, bool fallDetected) {
-    if (fallDetected) return true;
-    return online;
+  // ------------------------------------------------------------------
+  // IMPROVED: Emergency states keep device appearing online
+  // ------------------------------------------------------------------
+  bool _effectiveOnline(bool rawOnline, String fallStatus) {
+    // Emergency states always appear online even if sync is stale
+    final bool inEmergency = fallStatus == "pending" || fallStatus == "sent";
+    if (inEmergency) return true;
+    return rawOnline;
   }
 
-  // ---------------------------------------------------------------
+  // ------------------------------------------------------------------
+  // NEW: Force refresh when app resumes
+  // ------------------------------------------------------------------
+  Future<void> _refreshDeviceStatus() async {
+    if (cleanDeviceId.isEmpty) return;
+    
+    try {
+      final doc = await FirebaseFirestore.instance
+          .collection("devices")
+          .doc(cleanDeviceId)
+          .get();
+          
+      if (doc.exists && mounted) {
+        // Trigger rebuild with fresh data
+        setState(() {});
+      }
+    } catch (e) {
+      debugPrint('Refresh error: $e');
+    }
+  }
+
+  // ------------------------------------------------------------------
   @override
   Widget build(BuildContext context) {
     if (deviceId == null || cleanDeviceId.isEmpty) {
@@ -168,7 +184,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
           stream: FirebaseFirestore.instance
               .collection("devices")
               .doc(cleanDeviceId)
-              .snapshots(),
+              .snapshots(includeMetadataChanges: true), // Faster updates
           builder: (context, snap) {
             if (!snap.hasData) return _loading();
 
@@ -177,17 +193,15 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
             // Extract status fields once
             final String fallStatus = data["fallStatus"] ?? "none";
-            final bool fallDetected =
-    fallStatus == "pending" ||
-    fallStatus == "sent";
-
-            final rawOnline = _isOnline(data);
-
-// If emergency is active, device should still appear online
-final bool fallActive =
-    fallStatus == "pending" || fallStatus == "sent";
-
-final online = _effectiveOnline(rawOnline, fallActive);
+            
+            // Determine online status with 90s threshold
+            final bool rawOnline = _isOnline(data);
+            
+            // Emergency states (pending/sent) force online appearance
+            final bool online = _effectiveOnline(rawOnline, fallStatus);
+            
+            // Legacy compatibility
+            final bool fallDetected = fallStatus == "pending" || fallStatus == "sent";
 
             return _dashboardUI(data, online, fallDetected, fallStatus);
           },
@@ -196,10 +210,10 @@ final online = _effectiveOnline(rawOnline, fallActive);
     );
   }
 
-  // ---------------------------------------------------------------
+  // ------------------------------------------------------------------
   Widget _dashboardUI(
-    Map<String, dynamic> data, 
-    bool online, 
+    Map<String, dynamic> data,
+    bool online,
     bool fallDetected,
     String fallStatus,
   ) {
@@ -220,7 +234,7 @@ final online = _effectiveOnline(rawOnline, fallActive);
     );
   }
 
-  // ---------------------------------------------------------------
+  // ------------------------------------------------------------------
   Widget _header() {
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -246,7 +260,9 @@ final online = _effectiveOnline(rawOnline, fallActive);
     );
   }
 
-  // ---------------------------------------------------------------
+  // ------------------------------------------------------------------
+  // IMPROVED: Status card with strict priority logic
+  // ------------------------------------------------------------------
   Widget _statusCard(
     Map<String, dynamic> data,
     bool online,
@@ -257,71 +273,72 @@ final online = _effectiveOnline(rawOnline, fallActive);
     final lastSync = data["lastSync"];
     final bool isResetting = data["status"] == "resetting";
 
-    // Status detection (single source of truth)
-    final bool cancelledByElder = fallStatus == "cancelled_by_device";
-final bool emergencyDetected = fallStatus == "pending";
-final bool notifyingContacts = fallStatus == "sent";
-final bool smsFailed = fallStatus == "sms_failed";
+    // Strict priority detection (single source of truth)
+    final bool emergencyDetected = fallStatus == "pending";
+    final bool emergencyActive = fallStatus == "sent";
+final bool cancelled = fallStatus == "cancelled_by_device";
+final bool cooldown = fallStatus == "cooldown";
 
-    // ---------------- HEADLINE LOGIC ----------------
-  final String headline = isResetting
+
+    // ---------------- HEADLINE LOGIC (Priority-based) ----------------
+    final String headline = isResetting
     ? "Reconnecting — please wait"
-    : smsFailed
-        ? "Emergency alert — SMS delivery failed"
-        : cancelledByElder
-            ? "Emergency cancelled by the elder"
-            : emergencyDetected
-                ? "Emergency detected"
-                : notifyingContacts
-                    ? "Notifying emergency contacts"
-                    : online
-                        ? "Monitoring active"
-                        : "Temporarily offline";
+    : emergencyDetected
+        ? "Possible fall detected"
+       : emergencyActive
+    ? "Emergency alert active"
+: cancelled
+    ? "Alert cancelled"
+: cooldown
+    ? "System stabilizing"
+                : !online
+                    ? "Device offline"
+                    : "Monitoring active";
 
-    // ---------------- BADGE TEXT LOGIC ----------------
-  final String badgeText = smsFailed
-    ? "SMS Failed"
-    : cancelledByElder
-        ? "Cancelled"
-        : emergencyDetected
-            ? "Emergency"
-            : notifyingContacts
-                ? "Notifying"
-                : isResetting
-                    ? "Reconnecting"
-                    : online
-                        ? "Online"
-                        : "Offline";
+    // ---------------- BADGE TEXT LOGIC (Priority-based) ----------------
+    final String badgeText = isResetting
+    ? "Reconnecting"
+    : emergencyDetected
+        ? "Possible Fall"
+       : emergencyActive
+    ? "Emergency"
+: cancelled
+    ? "Canceled"
+: cooldown
+    ? "Cooldown"
+                : !online
+                    ? "Offline"
+                    : "Online";
 
     // ---------------- BADGE COLOR LOGIC ----------------
-  final Color badgeColor = smsFailed
+    final Color badgeColor = isResetting
     ? Colors.orangeAccent
-    : cancelledByElder
+    : emergencyDetected
         ? Colors.orangeAccent
-        : emergencyDetected
+       : emergencyActive
             ? Colors.redAccent
-            : notifyingContacts
-                ? Colors.orangeAccent
-                : isResetting
-                    ? Colors.orangeAccent
-                    : online
-                        ? Colors.lightGreenAccent
-                        : Colors.grey;
+                : cancelled
+                  ? Colors.grey
+                     : cooldown
+                       ? Colors.blueAccent
+                         : !online
+                          ? Colors.grey
+                            : Colors.lightGreenAccent;
 
     // ---------------- DESCRIPTION LOGIC ----------------
-   final String description = smsFailed
-    ? "SMS could not be delivered. The device may have weak mobile signal or SIM network issues."
-    : cancelledByElder
-        ? "The elder cancelled the alert from the wearable device."
-        : emergencyDetected
-            ? "Contacting emergency contacts via SMS. Delivery may take a few seconds depending on mobile signal."
-            : notifyingContacts
-                ? "Emergency contacts have been notified. Please follow the alert instructions."
-                : isResetting
-                    ? "The Senra wearable is reconnecting to resume monitoring."
-                    : online
-                        ? "The Senra wearable detects falls and sends alerts to this app."
-                        : "The device is temporarily offline. Monitoring will resume once connected.";
+    final String description = isResetting
+    ? "The Senra wearable is reconnecting."
+    : emergencyDetected
+        ? "A possible fall was detected. The user has a few seconds to cancel."
+        : emergencyActive
+            ? "Emergency alert has been triggered and caregivers are being notified."
+        : cancelled
+            ? "The alert was cancelled directly from the wearable device."
+        : cooldown
+            ? "The system is temporarily stabilizing to prevent repeated alerts."
+        : !online
+            ? "The device is temporarily offline."
+            : "The Senra wearable is actively monitoring for falls.";
 
     return Container(
       padding: const EdgeInsets.all(20),
@@ -404,8 +421,10 @@ final bool smsFailed = fallStatus == "sms_failed";
             children: [
               Row(
                 children: [
-                  const Icon(Icons.battery_full_rounded,
-                      color: Colors.lightGreenAccent),
+                  Icon(
+                    Icons.battery_full_rounded,
+                    color: battery > 20 ? Colors.lightGreenAccent : Colors.redAccent,
+                  ),
                   const SizedBox(width: 6),
                   Text(
                     "Battery $battery%",
@@ -425,38 +444,12 @@ final bool smsFailed = fallStatus == "sms_failed";
               ),
             ],
           ),
-
-          // ================= FALL WARNING =================
-          // Show warning for pending or sent states (not cancelled)
-          if ((emergencyDetected || notifyingContacts) && !cancelledByElder) ...[
-            const SizedBox(height: 14),
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: Colors.redAccent.withOpacity(0.2),
-                borderRadius: BorderRadius.circular(10),
-              ),
-              child: const Row(
-                children: [
-                  Icon(Icons.warning_amber_rounded, color: Colors.redAccent),
-                  SizedBox(width: 10),
-                  Text(
-                    "Fall detected",
-                    style: TextStyle(
-                      color: Colors.redAccent,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
         ],
       ),
     );
   }
 
-  // ---------------------------------------------------------------
+  // ------------------------------------------------------------------
   String _formatTime(dynamic raw) {
     DateTime? t;
     if (raw is Timestamp) t = raw.toDate();
@@ -470,7 +463,7 @@ final bool smsFailed = fallStatus == "sms_failed";
     return "${diff.inDays} days ago";
   }
 
-  // ---------------------------------------------------------------
+  // ------------------------------------------------------------------
   Widget _quickAccess(BuildContext context) {
     return Container(
       padding: const EdgeInsets.all(20),

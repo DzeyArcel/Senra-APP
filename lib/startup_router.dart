@@ -13,7 +13,6 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 
-import '../services/notification_initializer.dart';
 
 class StartupRouter extends StatefulWidget {
   const StartupRouter({super.key});
@@ -171,61 +170,7 @@ class _StartupRouterState extends State<StartupRouter> {
     return "/dashboard";
   }
 
-  // ============================================================
-  // ALERT LISTENER
-  // ============================================================
-  Future<void> _listenForAlerts() async {
-    final prefs = await SharedPreferences.getInstance();
-    final user = FirebaseAuth.instance.currentUser;
-
-    if (user == null) return;
-    if (prefs.getBool("wifiLock") == true) return;
-
-    final pairedDevice = prefs.getString("pairedDevice") ?? "";
-    if (pairedDevice.isEmpty) return;
-
-    await NotificationInitializer.init();
-
-    alertSub = FirebaseFirestore.instance
-        .collection("alerts")
-        .snapshots()
-        .listen((snap) {
-      if (snap.docs.isEmpty || alertOpened || isOffline) return;
-
-      final valid = snap.docs.where((d) {
-        final ts = d.data()["timestamp"];
-        return ts is Timestamp || ts is String;
-      }).toList();
-
-      valid.sort((a, b) {
-        DateTime ta =
-            (a.data()["timestamp"] as Timestamp?)?.toDate() ??
-                DateTime.tryParse(a.data()["timestamp"] ?? "") ??
-                DateTime(1970);
-
-        DateTime tb =
-            (b.data()["timestamp"] as Timestamp?)?.toDate() ??
-                DateTime.tryParse(b.data()["timestamp"] ?? "") ??
-                DateTime(1970);
-
-        return tb.compareTo(ta);
-      });
-
-      for (final doc in valid) {
-        final data = doc.data();
-        if (cleanId(data["deviceId"]) != pairedDevice) continue;
-        if (data["delivered"] == true) continue;
-
-        alertOpened = true;
-        Navigator.pushReplacementNamed(
-          context,
-          "/alert",
-          arguments: {"alertId": doc.id},
-        );
-        break;
-      }
-    });
-  }
+ 
 
   // ============================================================
   @override
@@ -243,9 +188,6 @@ class _StartupRouterState extends State<StartupRouter> {
       routed = true;
       Navigator.pushReplacementNamed(context, route);
 
-      if (route != "/wifi-config") {
-        _listenForAlerts();
-      }
     });
   }
 

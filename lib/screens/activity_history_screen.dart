@@ -223,6 +223,8 @@ class ActivityHistoryScreen extends StatelessWidget {
     double? lat,
     double? lng,
   }) {
+    final statusText = _statusText(status);
+
     return Container(
       margin: const EdgeInsets.only(bottom: 16),
       padding: const EdgeInsets.all(18),
@@ -258,16 +260,17 @@ class ActivityHistoryScreen extends StatelessWidget {
             ],
           ),
 
-          const SizedBox(height: 6),
-
-          Text(
-            _statusText(status),
-            style: const TextStyle(
-              color: Colors.orangeAccent,
-              fontSize: 13,
-              fontWeight: FontWeight.w600,
+          if (statusText.isNotEmpty) ...[
+            const SizedBox(height: 6),
+            Text(
+              statusText,
+              style: const TextStyle(
+                color: Colors.orangeAccent,
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+              ),
             ),
-          ),
+          ],
 
           const SizedBox(height: 10),
 
@@ -312,7 +315,7 @@ class ActivityHistoryScreen extends StatelessWidget {
       case "pending":
         return "Fall detected";
       case "sent":
-        return "Alert sent";
+        return ""; // removed alert sent label
       default:
         return "";
     }

@@ -14,11 +14,6 @@ class HelpNotifiedScreen extends StatelessWidget {
     final String? address = args?["address"]?.toString();
     final String? sentTime = args?["sentTime"]?.toString();
 
-    final List<Map<String, String>> contacts =
-        (args?["contacts"] as List<dynamic>? ?? [])
-            .map((e) => Map<String, String>.from(e))
-            .toList();
-
     return Scaffold(
       backgroundColor: const Color(0xFF0B1424),
       body: Center(
@@ -67,7 +62,7 @@ class HelpNotifiedScreen extends StatelessWidget {
               const SizedBox(height: 8),
 
               const Text(
-                "Your emergency alert has been successfully sent to your registered contacts.",
+                "Your emergency alert has been triggered.",
                 textAlign: TextAlign.center,
                 style: TextStyle(
                   color: Colors.white70,
@@ -96,38 +91,22 @@ class HelpNotifiedScreen extends StatelessWidget {
 
               const SizedBox(height: 28),
 
-              const Align(
-                alignment: Alignment.centerLeft,
-                child: Text(
-                  "Notified Contacts",
-                  style: TextStyle(
-                    color: Colors.white70,
-                    fontSize: 13,
-                    fontWeight: FontWeight.w700,
-                  ),
+              const Text(
+                "Senra immediately notifies caregivers through the mobile app when a fall is detected. "
+"If internet connectivity is unavailable, the device will automatically send an SMS alert to the registered emergency contacts as a backup. ",
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: Colors.white60,
+                  fontSize: 13,
+                  height: 1.4,
                 ),
               ),
 
-              const SizedBox(height: 12),
-
-              if (contacts.isEmpty)
-                const Padding(
-                  padding: EdgeInsets.symmetric(vertical: 8),
-                  child: Text(
-                    "No contacts were available at the time of this alert.",
-                    style: TextStyle(
-                      color: Colors.white38,
-                      fontSize: 12,
-                    ),
-                  ),
-                )
-              else
-                ...contacts.map(_contactTile),
-
-              const SizedBox(height: 20),
+              const SizedBox(height: 10),
 
               const Text(
-                "Delivery time may vary depending on network conditions.",
+               "The device will attempt to send the SMS up to 2 times. "
+"Delivery time may vary depending on cellular network conditions.",
                 textAlign: TextAlign.center,
                 style: TextStyle(
                   color: Colors.white38,
@@ -141,11 +120,11 @@ class HelpNotifiedScreen extends StatelessWidget {
                 width: double.infinity,
                 child: ElevatedButton(
                   onPressed: () {
-                    Navigator.pushNamedAndRemoveUntil(
-                      context,
-                      "/dashboard",
-                      (_) => false,
-                    );
+                 Navigator.pushNamedAndRemoveUntil(
+  context,
+  "/dashboard",
+  (route) => false,
+);
                   },
                   style: ElevatedButton.styleFrom(
                     backgroundColor: const Color(0xFF33B5FF),
@@ -225,60 +204,5 @@ class HelpNotifiedScreen extends StatelessWidget {
         ),
       ],
     );
-  }
-
-  static Widget _contactTile(Map<String, String> c) {
-    final status = c['status'] ?? "Sending";
-
-    return Container(
-      width: double.infinity,
-      margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: const Color(0xFF1A2942),
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Row(
-        children: [
-          const Icon(Icons.phone, color: Color(0xFF33B5FF), size: 18),
-          const SizedBox(width: 14),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  c['name'] ?? "Unknown contact",
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.w700,
-                    fontSize: 15,
-                  ),
-                ),
-                const SizedBox(height: 3),
-                Text(
-                  c['phone'] ?? "",
-                  style: const TextStyle(
-                    color: Colors.white54,
-                    fontSize: 13,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          _statusIcon(status),
-        ],
-      ),
-    );
-  }
-
-  static Widget _statusIcon(String status) {
-    switch (status) {
-      case "SMS Sent":
-        return const Icon(Icons.check_circle, color: Colors.green, size: 18);
-      case "Failed":
-        return const Icon(Icons.cancel, color: Colors.red, size: 18);
-      default:
-        return const Icon(Icons.hourglass_top, color: Colors.orange, size: 18);
-    }
   }
 }
