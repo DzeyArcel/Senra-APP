@@ -20,7 +20,7 @@ class _PhoneAuthScreenState extends State<PhoneAuthScreen> {
 
   // 🇵🇭 Normalize PH → +639XXXXXXXXX
   String? normalizePH(String input) {
-    input = input.trim();
+    input = input.replaceAll(RegExp(r'[^0-9+]'), '');
     if (RegExp(r'^09\d{9}$').hasMatch(input)) {
       return "+63${input.substring(1)}";
     }

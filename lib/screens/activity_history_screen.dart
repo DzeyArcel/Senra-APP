@@ -132,24 +132,18 @@ class ActivityHistoryScreen extends StatelessWidget {
               ...docs.map((doc) {
                 final data = doc.data() as Map<String, dynamic>;
 
-                final lat = (data["lat"] as num?)?.toDouble();
-                final lng = (data["lng"] as num?)?.toDouble();
-
                 final rawAddress = data["address"];
 
                 final address = allowLocation
-                    ? _formatAddress(rawAddress, lat, lng)
+                    ? _formatAddress(rawAddress)
                     : "Location hidden";
 
                 return _activityCard(
                   context,
                   docId: doc.id,
                   type: data["fallType"] ?? "Fall Detected",
-                  status: data["status"] ?? "pending",
                   time: _formatTime(data["timestamp"]),
                   address: address,
-                  lat: allowLocation ? lat : null,
-                  lng: allowLocation ? lng : null,
                 );
               }),
             ],
@@ -217,14 +211,9 @@ class ActivityHistoryScreen extends StatelessWidget {
     BuildContext context, {
     required String docId,
     required String type,
-    required String status,
     required String time,
     required String address,
-    double? lat,
-    double? lng,
   }) {
-    final statusText = _statusText(status);
-
     return Container(
       margin: const EdgeInsets.only(bottom: 16),
       padding: const EdgeInsets.all(18),
@@ -251,7 +240,7 @@ class ActivityHistoryScreen extends StatelessWidget {
                 ),
               ]),
               GestureDetector(
-                onTap: () => _deleteOne(context, docId),
+                onTap: () => _deleteOne(docId),
                 child: const Icon(
                   Icons.delete_outline,
                   color: Colors.white54,
@@ -259,18 +248,6 @@ class ActivityHistoryScreen extends StatelessWidget {
               ),
             ],
           ),
-
-          if (statusText.isNotEmpty) ...[
-            const SizedBox(height: 6),
-            Text(
-              statusText,
-              style: const TextStyle(
-                color: Colors.orangeAccent,
-                fontSize: 13,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-          ],
 
           const SizedBox(height: 10),
 
@@ -291,39 +268,14 @@ class ActivityHistoryScreen extends StatelessWidget {
               fontSize: 13,
             ),
           ),
-
-          if (lat != null && lng != null)
-            Padding(
-              padding: const EdgeInsets.only(top: 6),
-              child: Text(
-                "GPS: ${lat.toStringAsFixed(5)}, ${lng.toStringAsFixed(5)}",
-                style: const TextStyle(
-                  color: Colors.white38,
-                  fontSize: 12,
-                ),
-              ),
-            ),
         ],
       ),
     );
   }
 
-  String _statusText(String status) {
-    switch (status) {
-      case "cancelled_by_device":
-        return "Cancelled by elder";
-      case "pending":
-        return "Fall detected";
-      case "sent":
-        return ""; // removed alert sent label
-      default:
-        return "";
-    }
-  }
-
-  String _formatAddress(String? raw, double? lat, double? lng) {
+  String _formatAddress(String? raw) {
     if (raw == null || raw.isEmpty) {
-      return _fallbackLatLng(lat, lng);
+      return "Unknown location";
     }
 
     String address = raw;
@@ -347,22 +299,11 @@ class ActivityHistoryScreen extends StatelessWidget {
         "${dt.minute.toString().padLeft(2, '0')}";
   }
 
-  String _fallbackLatLng(double? lat, double? lng) {
-    if (lat == null || lng == null) return "Unknown location";
-    return "GPS: ${lat.toStringAsFixed(5)}, ${lng.toStringAsFixed(5)}";
-  }
-
-  void _deleteOne(BuildContext context, String docId) async {
-    final doc = await FirebaseFirestore.instance
+  void _deleteOne(String docId) async {
+    await FirebaseFirestore.instance
         .collection("alerts")
         .doc(docId)
-        .get();
-
-    final status = doc.data()?["status"];
-
-    if (status == "pending") return;
-
-    doc.reference.delete();
+        .delete();
   }
 
   void _clearAll(BuildContext context, String deviceId) async {
@@ -372,10 +313,7 @@ class ActivityHistoryScreen extends StatelessWidget {
         .get();
 
     for (final doc in snap.docs) {
-      final status = doc.data()["status"];
-      if (status != "pending") {
-        doc.reference.delete();
-      }
+      await doc.reference.delete();
     }
   }
 }

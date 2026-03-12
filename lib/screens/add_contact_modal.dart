@@ -21,7 +21,6 @@ class AddContactModal extends StatefulWidget {
 }
 
 class _AddContactModalState extends State<AddContactModal> {
-
   final nameController = TextEditingController();
   final phoneController = TextEditingController();
 
@@ -40,13 +39,20 @@ class _AddContactModalState extends State<AddContactModal> {
     }
   }
 
+  @override
+  void dispose() {
+    nameController.dispose();
+    phoneController.dispose();
+    super.dispose();
+  }
+
   // ------------------------------------------------------------
   // NORMALIZE PH NUMBER
   // ------------------------------------------------------------
 
   String normalizePHNumber(String phone) {
-
     phone = phone.trim();
+    phone = phone.replaceAll(RegExp(r'[^0-9+]'), '');
 
     if (phone.startsWith("09")) {
       return "+63${phone.substring(1)}";
@@ -68,7 +74,6 @@ class _AddContactModalState extends State<AddContactModal> {
   // ------------------------------------------------------------
 
   Future<void> _syncDeviceNumbers(String caregiverId) async {
-
     final prefs = await SharedPreferences.getInstance();
     String? deviceId = prefs.getString("pairedDevice");
 
@@ -110,7 +115,6 @@ class _AddContactModalState extends State<AddContactModal> {
   // ------------------------------------------------------------
 
   Future<void> _saveContact() async {
-
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) return;
 
@@ -118,6 +122,7 @@ class _AddContactModalState extends State<AddContactModal> {
     String phone = phoneController.text.trim();
 
     if (name.isEmpty || phone.isEmpty) {
+      if (!mounted) return;
 
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -131,28 +136,27 @@ class _AddContactModalState extends State<AddContactModal> {
 
     phone = normalizePHNumber(phone);
 
-    setState(() => saving = true);
+    if (mounted) {
+      setState(() => saving = true);
+    }
 
     try {
-
       final contactsRef = FirebaseFirestore.instance
           .collection("caregivers")
           .doc(user.uid)
           .collection("contacts");
 
       if (widget.contactId != null) {
-
         await contactsRef.doc(widget.contactId).update({
           "name": name,
           "phone": phone,
           "updatedAt": FieldValue.serverTimestamp(),
         });
-
       } else {
-
         final snap = await contactsRef.get();
 
         if (snap.docs.length >= 3) {
+          if (!mounted) return;
 
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
@@ -170,15 +174,14 @@ class _AddContactModalState extends State<AddContactModal> {
           "phone": phone,
           "createdAt": FieldValue.serverTimestamp(),
         });
-
       }
 
       await _syncDeviceNumbers(user.uid);
 
       if (!mounted) return;
       Navigator.pop(context);
-
     } catch (e) {
+      if (!mounted) return;
 
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -186,10 +189,11 @@ class _AddContactModalState extends State<AddContactModal> {
           backgroundColor: Colors.redAccent,
         ),
       );
-
     }
 
-    if (mounted) setState(() => saving = false);
+    if (mounted) {
+      setState(() => saving = false);
+    }
   }
 
   // ------------------------------------------------------------
@@ -198,63 +202,43 @@ class _AddContactModalState extends State<AddContactModal> {
 
   @override
   Widget build(BuildContext context) {
-
     return Padding(
       padding: EdgeInsets.only(
         bottom: MediaQuery.of(context).viewInsets.bottom,
       ),
-
       child: Container(
-
         padding: const EdgeInsets.all(20),
-
         decoration: const BoxDecoration(
           color: Color(0xFF162233),
           borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
         ),
-
         child: Column(
-
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
-
           children: [
-
             Text(
               widget.contactId == null
                   ? "Add Emergency Contact"
                   : "Edit Emergency Contact",
-
               style: const TextStyle(
                 color: Colors.white,
                 fontSize: 18,
                 fontWeight: FontWeight.w700,
               ),
             ),
-
             const SizedBox(height: 20),
-
             _field("Full Name", nameController),
-
             _field("Phone Number", phoneController),
-
             const SizedBox(height: 20),
-
             GestureDetector(
-
               onTap: saving ? null : _saveContact,
-
               child: Container(
-
                 width: double.infinity,
-
                 padding: const EdgeInsets.symmetric(vertical: 14),
-
                 decoration: BoxDecoration(
                   color: saving ? Colors.grey : const Color(0xFF33B5FF),
                   borderRadius: BorderRadius.circular(30),
                 ),
-
                 child: Center(
                   child: Text(
                     saving ? "Saving..." : "Save Contact",
@@ -273,18 +257,13 @@ class _AddContactModalState extends State<AddContactModal> {
   }
 
   Widget _field(String label, TextEditingController controller) {
-
     final isPhone = label.contains("Phone");
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 14),
-
       child: Column(
-
         crossAxisAlignment: CrossAxisAlignment.start,
-
         children: [
-
           Text(
             label,
             style: const TextStyle(
@@ -292,29 +271,20 @@ class _AddContactModalState extends State<AddContactModal> {
               fontSize: 13,
             ),
           ),
-
           const SizedBox(height: 6),
-
           Container(
-
             decoration: BoxDecoration(
               color: const Color(0xFF101B2C),
               borderRadius: BorderRadius.circular(10),
             ),
-
             child: TextField(
-
               controller: controller,
-
               style: const TextStyle(color: Colors.white),
-
               keyboardType:
                   isPhone ? TextInputType.phone : TextInputType.text,
-
               inputFormatters: isPhone
                   ? [FilteringTextInputFormatter.allow(RegExp(r'[0-9+]'))]
                   : [],
-
               decoration: const InputDecoration(
                 border: InputBorder.none,
                 contentPadding:

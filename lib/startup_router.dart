@@ -1,9 +1,9 @@
 // ============================================================
-// StartupRouter.dart — FINAL ECOSYSTEM-SAFE VERSION
-// - Device STATE is authoritative
-// - Explicit reset handling (no timing races)
-// - No Wi-Fi reset loops possible
-// - FIXED: existing numbers with incomplete profile
+// StartupRouter.dart — CLEAN STABLE VERSION
+// - Auth check first
+// - Safe onboarding routing
+// - Device state authority
+// - No WiFi reset loops
 // ============================================================
 
 import 'dart:async';
@@ -13,7 +13,6 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 
-
 class StartupRouter extends StatefulWidget {
   const StartupRouter({super.key});
 
@@ -22,19 +21,15 @@ class StartupRouter extends StatefulWidget {
 }
 
 class _StartupRouterState extends State<StartupRouter> {
-  StreamSubscription? alertSub;
   StreamSubscription? netSub;
 
-  bool alertOpened = false;
   bool routed = false;
   bool isOffline = false;
-
-  String cleanId(dynamic v) =>
-      v == null ? "" : v.toString().replaceAll('"', '').trim();
 
   // ============================================================
   // DEVICE ONLINE CHECK
   // ============================================================
+
   Future<bool> _deviceIsOnline(String deviceId) async {
     try {
       final snap = await FirebaseFirestore.instance
@@ -45,6 +40,7 @@ class _StartupRouterState extends State<StartupRouter> {
       if (!snap.exists) return false;
 
       final data = snap.data()!;
+
       if (data["status"] == "resetting") return false;
 
       final ts = data["lastSync"];
@@ -64,55 +60,69 @@ class _StartupRouterState extends State<StartupRouter> {
   // ============================================================
   // ROUTING DECISION
   // ============================================================
+
   Future<String> _decideRoute() async {
     final prefs = await SharedPreferences.getInstance();
-    final user = FirebaseAuth.instance.currentUser;
     final now = DateTime.now().millisecondsSinceEpoch;
+
+    final user = FirebaseAuth.instance.currentUser;
+
+    // ------------------------------------------------------------
+    // AUTH CHECK FIRST
+    // ------------------------------------------------------------
+
+    if (user == null) {
+      await prefs.remove("pairedDevice");
+      return "/phone-auth";
+    }
+
+    // ------------------------------------------------------------
+    // WELCOME SCREEN
+    // ------------------------------------------------------------
+
+    final seenWelcome = prefs.getBool("seen_welcome") ?? false;
+    if (!seenWelcome) return "/welcome";
 
     // ------------------------------------------------------------
     // WIFI RESET GRACE WINDOW
     // ------------------------------------------------------------
+
     final wifiResetSent = prefs.getBool("wifiResetSent") ?? false;
     final wifiResetAt = prefs.getInt("wifiResetAt");
 
     if (wifiResetSent && wifiResetAt != null) {
       final diff = (now - wifiResetAt) ~/ 1000;
-      if (diff < 60) return "/wifi-config";
+
+      if (diff < 60) {
+        return "/wifi-config";
+      }
+
       await prefs.remove("wifiResetSent");
       await prefs.remove("wifiResetAt");
     }
 
-    final seenWelcome = prefs.getBool("seen_welcome") ?? false;
-    final needsWifi = prefs.getBool("needsWifiSetup") ?? true;
-    String pairedDevice = prefs.getString("pairedDevice") ?? "";
-
-    if (!seenWelcome) return "/welcome";
-
     // ------------------------------------------------------------
-    // LOGOUT
+    // CAREGIVER PROFILER
     // ------------------------------------------------------------
-    if (user == null) {
-      await prefs.remove("pairedDevice");
-      await prefs.remove("wifiLock");
-      await prefs.remove("wifiResetSent");
-      await prefs.remove("wifiResetAt");
-      return "/phone-auth";
-    }
 
-    // ------------------------------------------------------------
-    // CAREGIVER PROFILE CHECK (🔥 CRITICAL FIX)
-    // ------------------------------------------------------------
-    final cgSnap = await FirebaseFirestore.instance
-        .collection("caregivers")
-        .doc(user.uid)
-        .get();
+    final cgRef =
+        FirebaseFirestore.instance.collection("caregivers").doc(user.uid);
 
-    if (!cgSnap.exists) return "/caregiver-info";
+    final cgSnap = await cgRef.get();
+    
+if (!cgSnap.exists) {
+  await FirebaseAuth.instance.signOut();
+  return "/phone-auth";
+}
 
     final data = cgSnap.data()!;
 
     final hasName =
         data["name"] != null && data["name"].toString().trim().isNotEmpty;
+
+    if (!hasName) {
+      return "/caregiver-info";
+    }
 
     final hasEmergency =
         data["emergencyName"] != null &&
@@ -120,27 +130,32 @@ class _StartupRouterState extends State<StartupRouter> {
         data["emergencyName"].toString().trim().isNotEmpty &&
         data["emergencyPhone"].toString().trim().isNotEmpty;
 
-    // 🚨 FORCE COMPLETION EVEN FOR EXISTING NUMBERS
-    if (!hasName || !hasEmergency) {
-      return "/caregiver-info";
+    if (!hasEmergency) {
+      return "/emergency-contacts";
     }
 
     // ------------------------------------------------------------
     // DEVICE PAIRING
     // ------------------------------------------------------------
-    if (pairedDevice.isEmpty) {
-      final devices =
-          (data["devices"] as List?)?.cast<String>() ?? [];
 
-      if (devices.isEmpty) return "/device-pairing";
+    String pairedDevice = prefs.getString("pairedDevice") ?? "";
+
+    if (pairedDevice.isEmpty) {
+      final devices = (data["devices"] as List?)?.cast<String>() ?? [];
+
+      if (devices.isEmpty) {
+        return "/device-pairing";
+      }
 
       pairedDevice = devices.first;
+
       await prefs.setString("pairedDevice", pairedDevice);
     }
 
     // ------------------------------------------------------------
-    // DEVICE RESET STATE
+    // DEVICE RESET
     // ------------------------------------------------------------
+
     final deviceSnap = await FirebaseFirestore.instance
         .collection("devices")
         .doc(pairedDevice)
@@ -152,48 +167,47 @@ class _StartupRouterState extends State<StartupRouter> {
     }
 
     // ------------------------------------------------------------
-    // WIFI CHECK (NON-BLOCKING)
+    // WIFI CHECK
     // ------------------------------------------------------------
+
+    final needsWifi = prefs.getBool("needsWifiSetup") ?? true;
+
     if (needsWifi) {
       final online = await _deviceIsOnline(pairedDevice);
 
       if (online) {
         await prefs.setBool("needsWifiSetup", false);
-        await prefs.remove("wifiLock");
-        await prefs.remove("wifiResetSent");
-        await prefs.remove("wifiResetAt");
       }
-
-      return "/dashboard";
     }
 
     return "/dashboard";
   }
 
- 
-
   // ============================================================
+
   @override
   void initState() {
     super.initState();
 
-    netSub = Connectivity().onConnectivityChanged.listen((r) {
-      setState(() => isOffline = r == ConnectivityResult.none);
+    netSub = Connectivity().onConnectivityChanged.listen((result) {
+      setState(() {
+        isOffline = result == ConnectivityResult.none;
+      });
     });
 
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       final route = await _decideRoute();
+
       if (!mounted || routed) return;
 
       routed = true;
-      Navigator.pushReplacementNamed(context, route);
 
+      Navigator.pushReplacementNamed(context, route);
     });
   }
 
   @override
   void dispose() {
-    alertSub?.cancel();
     netSub?.cancel();
     super.dispose();
   }
@@ -203,7 +217,9 @@ class _StartupRouterState extends State<StartupRouter> {
     return const Scaffold(
       backgroundColor: Color(0xFF0E1625),
       body: Center(
-        child: CircularProgressIndicator(color: Color(0xFF33B5FF)),
+        child: CircularProgressIndicator(
+          color: Color(0xFF33B5FF),
+        ),
       ),
     );
   }

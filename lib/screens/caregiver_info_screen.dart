@@ -75,19 +75,25 @@ class _CaregiverInfoScreenState extends State<CaregiverInfoScreen> {
       final uid = user.uid;
 
       // SAVE CAREGIVER PROFILE
-      await firestore.collection("caregivers").doc(uid).set({
-        "name": name,
-        "phone": user.phoneNumber ?? "",
-        "locationSharing": true,
-        "pushNotifications": true,
-        "emergencyVibration": true,
-        "primaryContactId": "primary",
+    await firestore.collection("caregivers").doc(uid).set({
+  "name": name,
+  "phone": user.phoneNumber ?? "",
 
-        // used later for device sync
-        "primaryEmergencyPhone": emergencyPhone,
+  // router completion fields
+  "emergencyName": emergencyName,
+  "emergencyPhone": emergencyPhone,
 
-        "updatedAt": FieldValue.serverTimestamp(),
-      }, SetOptions(merge: true));
+  // settings
+  "locationSharing": true,
+  "pushNotifications": true,
+  "emergencyVibration": true,
+
+  // device sync
+  "primaryContactId": "primary",
+  "primaryEmergencyPhone": emergencyPhone,
+
+  "updatedAt": FieldValue.serverTimestamp(),
+}, SetOptions(merge: true));
 
       // SAVE PRIMARY CONTACT
       await firestore

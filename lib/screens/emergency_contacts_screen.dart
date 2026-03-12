@@ -15,85 +15,88 @@ class EmergencyContactsScreen extends StatefulWidget {
 class _EmergencyContactsScreenState extends State<EmergencyContactsScreen> {
 
   String caregiverId = "";
+  String deviceId = "";
   bool loading = true;
   String emergencyPhone = "";
 
-  StreamSubscription<User?>? authSub;
+  StreamSubscription<DocumentSnapshot>? deviceSub;
 
   @override
   void initState() {
     super.initState();
-    _listenAuth();
+    _init();
   }
 
-  @override
-  void dispose() {
-    authSub?.cancel();
-    super.dispose();
+  Future<void> _init() async {
+
+    final user = FirebaseAuth.instance.currentUser;
+
+    if (user != null) {
+      caregiverId = user.uid;
+      await _loadPairedDevice();
+    }
+
+    if (mounted) {
+      setState(() {
+        loading = false;
+      });
+    }
+
   }
 
-  void _listenAuth() {
+  Future<void> _loadPairedDevice() async {
 
-    authSub = FirebaseAuth.instance.authStateChanges().listen((user) async {
+    final caregiverDoc = await FirebaseFirestore.instance
+        .collection("caregivers")
+        .doc(caregiverId)
+        .get();
+
+    final data = caregiverDoc.data();
+
+    if (data == null) return;
+
+    if (data["pairedDevice"] != null) {
+      deviceId = data["pairedDevice"];
+    }
+    else if (data["devices"] is List && data["devices"].isNotEmpty) {
+      deviceId = data["devices"][0];
+    }
+
+    if (deviceId.isNotEmpty) {
+      _listenEmergencyPhone();
+    }
+
+  }
+
+  void _listenEmergencyPhone() {
+
+    deviceSub = FirebaseFirestore.instance
+        .collection("devices")
+        .doc(deviceId)
+        .snapshots()
+        .listen((doc) {
 
       if (!mounted) return;
 
-      caregiverId = user?.uid ?? "";
-
-      if (caregiverId.isNotEmpty) {
-        await _loadEmergencyPhone();
-      }
-
       setState(() {
-        loading = false;
+        emergencyPhone = doc.data()?["emergencyPhone"] ?? "";
       });
 
     });
 
   }
 
-  // Load emergency phone from device document
-
-  Future<void> _loadEmergencyPhone() async {
-
-    final doc = await FirebaseFirestore.instance
-        .collection("devices")
-        .doc("GAY")
-        .get();
-
-    if (doc.exists) {
-      emergencyPhone = doc.data()?["emergencyPhone"] ?? "";
-    }
-
-  }
-
-  // Set emergency contact
-
   Future<void> _setEmergencyContact(String phone) async {
 
-    try {
+    if (deviceId.isEmpty) return;
 
-      await FirebaseFirestore.instance
-          .collection("devices")
-          .doc("GAY")
-          .set({
-        "emergencyPhone": phone,
-        "updatedAt": FieldValue.serverTimestamp(),
-      }, SetOptions(merge: true));
-
-      setState(() {
-        emergencyPhone = phone;
-      });
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text("Emergency contact selected"),
-        ),
-      );
-
-    } catch (e) {
-      print("Emergency contact update failed: $e");
-    }
+    await FirebaseFirestore.instance
+        .collection("devices")
+        .doc(deviceId)
+        .set({
+      "emergencyPhone": phone,
+      "updatedAt": FieldValue.serverTimestamp(),
+    }, SetOptions(merge: true));
 
   }
 
@@ -140,14 +143,72 @@ class _EmergencyContactsScreenState extends State<EmergencyContactsScreen> {
 
   }
 
+  Future<void> _confirmDelete(String id) async {
+
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF162233),
+        title: const Text(
+          "Delete Contact",
+          style: TextStyle(color: Colors.white),
+        ),
+        content: const Text(
+          "Are you sure you want to delete this contact?",
+          style: TextStyle(color: Colors.white70),
+        ),
+        actions: [
+          TextButton(
+            child: const Text("Cancel"),
+            onPressed: () => Navigator.pop(context, false),
+          ),
+          TextButton(
+            child: const Text(
+              "Delete",
+              style: TextStyle(color: Colors.red),
+            ),
+            onPressed: () => Navigator.pop(context, true),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm == true) {
+      await _deleteContact(id);
+    }
+
+  }
+
   Future<void> _deleteContact(String id) async {
 
-    await FirebaseFirestore.instance
+    final ref = FirebaseFirestore.instance
         .collection("caregivers")
         .doc(caregiverId)
         .collection("contacts")
-        .doc(id)
-        .delete();
+        .doc(id);
+
+    final doc = await ref.get();
+
+    if (!doc.exists) return;
+
+    final phone = doc.data()?["phone"] ?? "";
+
+    await ref.delete();
+
+    if (phone == emergencyPhone && deviceId.isNotEmpty) {
+
+      await FirebaseFirestore.instance
+          .collection("devices")
+          .doc(deviceId)
+          .set({
+        "emergencyPhone": ""
+      }, SetOptions(merge: true));
+
+      setState(() {
+        emergencyPhone = "";
+      });
+
+    }
 
   }
 
@@ -164,7 +225,6 @@ class _EmergencyContactsScreenState extends State<EmergencyContactsScreen> {
     }
 
     return Scaffold(
-
       backgroundColor: const Color(0xFF0E1625),
 
       body: SafeArea(
@@ -292,7 +352,7 @@ class _EmergencyContactsScreenState extends State<EmergencyContactsScreen> {
                                 data["phone"]),
 
                             onDelete: () =>
-                                _deleteContact(doc.id),
+                                _confirmDelete(doc.id),
 
                           ),
 
@@ -304,20 +364,13 @@ class _EmergencyContactsScreenState extends State<EmergencyContactsScreen> {
                   const SizedBox(height: 30),
 
                   Container(
-
                     padding: const EdgeInsets.all(18),
-
                     decoration: BoxDecoration(
                       color: const Color(0xFF162233),
-                      borderRadius:
-                          BorderRadius.circular(14),
+                      borderRadius: BorderRadius.circular(14),
                     ),
-
                     child: const Column(
-
-                      crossAxisAlignment:
-                          CrossAxisAlignment.start,
-
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
 
                         Text(
@@ -330,15 +383,24 @@ class _EmergencyContactsScreenState extends State<EmergencyContactsScreen> {
 
                         SizedBox(height: 12),
 
-                        _Bullet("- Up to 3 trusted contacts can be saved"),
+                        Text(
+                          "- Up to 3 trusted contacts can be saved",
+                          style: TextStyle(color: Colors.white70, fontSize: 13),
+                        ),
 
                         SizedBox(height: 6),
 
-                        _Bullet("- Tap a contact to select who receives emergency SMS alerts"),
+                        Text(
+                          "- Tap a contact to select who receives emergency SMS alerts",
+                          style: TextStyle(color: Colors.white70, fontSize: 13),
+                        ),
 
                         SizedBox(height: 6),
 
-                        _Bullet("- Alerts are sent automatically from the paired Senra device"),
+                        Text(
+                          "- Alerts are sent automatically from the paired Senra device",
+                          style: TextStyle(color: Colors.white70, fontSize: 13),
+                        ),
 
                       ],
                     ),
@@ -452,24 +514,5 @@ class _EmergencyContactsScreenState extends State<EmergencyContactsScreen> {
         ],
       ),
     );
-  }
-}
-
-class _Bullet extends StatelessWidget {
-
-  final String text;
-
-  const _Bullet(this.text);
-
-  @override
-  Widget build(BuildContext context) {
-
-    return Text(
-      text,
-      style: const TextStyle(
-          color: Colors.white70,
-          fontSize: 13),
-    );
-
   }
 }

@@ -4,6 +4,7 @@ import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 
+
 import 'firebase_options.dart';
 import 'startup_router.dart';
 
@@ -36,7 +37,7 @@ import 'screens/help_notified_screen.dart';
 import 'screens/waiting_for_ap_screen.dart';
 
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
-
+bool alertScreenActive = false;
 Future<void> main() async {
 
   WidgetsFlutterBinding.ensureInitialized();
@@ -108,40 +109,40 @@ Future<void> main() async {
   // FOREGROUND NOTIFICATION
   // ============================================================
 
-  FirebaseMessaging.onMessage.listen((RemoteMessage message) {
+FirebaseMessaging.onMessage.listen((RemoteMessage message) {
 
-    debugPrint("🚨 FALL ALERT RECEIVED");
+  final data = message.data;
 
-    final data = message.data;
+  if (data['alertId'] == null) return;
 
-    if (data['alertId'] == null) return;
+  // open alert screen immediately
+  Future.microtask(() {
+    navigatorKey.currentState?.pushNamed(
+      '/alert',
+      arguments: {
+        "alertId": data['alertId'],
+        "deviceId": data['deviceId'],
+        "fallType": "Fall Detected",
+        "vibrate": true,
+        "playSound": true,
+        "showLocation": true,
+        "startSeconds": 8,
+      },
+    );
+  });
 
-    final notification = message.notification;
+  // show notification after
+  Future.delayed(const Duration(milliseconds: 200), () {
 
-    if (notification != null) {
-
-      showLocalNotification(
-        title: notification.title ?? "Senra Alert",
-        body: notification.body ?? "A fall was detected.",
-        payload: data['alertId'],
-      );
-
-    }
-
-    navigatorKey.currentState?.pushReplacementNamed(
-  '/alert',
-  arguments: {
-    "alertId": data['alertId'],
-    "deviceId": data['deviceId'],
-    "fallType": "Fall Detected",
-    "vibrate": true,
-    "playSound": true,
-    "showLocation": true,
-    "startSeconds": 8,
-  },
-);
+    showLocalNotification(
+      title: "Senra Alert",
+      body: "Fall detected",
+      payload: data['alertId'],
+    );
 
   });
+
+});
 
   // ============================================================
   // NOTIFICATION CLICK (APP BACKGROUND)

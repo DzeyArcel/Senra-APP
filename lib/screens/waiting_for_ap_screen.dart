@@ -1,7 +1,28 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 
-class WaitingForAP extends StatelessWidget {
+class WaitingForAP extends StatefulWidget {
   const WaitingForAP({super.key});
+
+  @override
+  State<WaitingForAP> createState() => _WaitingForAPState();
+}
+
+class _WaitingForAPState extends State<WaitingForAP> {
+
+  @override
+  void initState() {
+    super.initState();
+
+    // Wait longer for device AP
+    Timer(const Duration(seconds: 30), () {
+
+      if (!mounted) return;
+
+      Navigator.pushReplacementNamed(context, "/wifi-config");
+
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -16,7 +37,7 @@ class WaitingForAP extends StatelessWidget {
             border: Border.all(color: Colors.white10),
             boxShadow: [
               BoxShadow(
-                color: const Color(0xFF33B5FF).withOpacity(0.12),
+                color: const Color(0xFF33B5FF).withValues(alpha: 0.12),
                 blurRadius: 30,
                 spreadRadius: 4,
               ),
@@ -24,21 +45,21 @@ class WaitingForAP extends StatelessWidget {
           ),
           child: Column(
             mainAxisSize: MainAxisSize.min,
-            children: [
-              // LOADING RING
+            children: const [
+
               SizedBox(
                 width: 54,
                 height: 54,
                 child: CircularProgressIndicator(
                   strokeWidth: 4,
-                  color: const Color(0xFF33B5FF),
+                  color: Color(0xFF33B5FF),
                   backgroundColor: Colors.white10,
                 ),
               ),
 
-              const SizedBox(height: 22),
+              SizedBox(height: 22),
 
-              const Text(
+              Text(
                 "Waiting for Senra device",
                 style: TextStyle(
                   color: Colors.white,
@@ -47,9 +68,9 @@ class WaitingForAP extends StatelessWidget {
                 ),
               ),
 
-              const SizedBox(height: 8),
+              SizedBox(height: 8),
 
-              const Text(
+              Text(
                 "The device is switching to setup mode.\nThis usually takes a few seconds.",
                 textAlign: TextAlign.center,
                 style: TextStyle(
@@ -59,9 +80,9 @@ class WaitingForAP extends StatelessWidget {
                 ),
               ),
 
-              const SizedBox(height: 16),
+              SizedBox(height: 16),
 
-              const Text(
+              Text(
                 "Please keep this screen open.",
                 style: TextStyle(
                   color: Colors.white38,

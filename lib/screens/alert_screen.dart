@@ -34,6 +34,7 @@ class AlertScreen extends StatefulWidget {
 }
 
 class _AlertScreenState extends State<AlertScreen> {
+
   late int seconds;
   Timer? timer;
 
@@ -55,11 +56,15 @@ class _AlertScreenState extends State<AlertScreen> {
 
     seconds = widget.startSeconds > 8 ? 8 : widget.startSeconds;
 
-    _checkAlertState();
+    _startListeners();
+    _startCountdown();
+
+    Future.microtask(_verifyAndStartFeedback);
   }
 
   @override
   void dispose() {
+
     timer?.cancel();
     alertListener?.cancel();
     deviceListener?.cancel();
@@ -69,47 +74,13 @@ class _AlertScreenState extends State<AlertScreen> {
 
     audioPlayer.dispose();
 
+    NotificationInitializer.clearActiveAlert();
+
     super.dispose();
   }
 
-  Future<void> _checkAlertState() async {
-    final doc = await FirebaseFirestore.instance
-        .collection("alerts")
-        .doc(widget.alertId)
-        .get();
-
-    if (!doc.exists) {
-      if (!mounted) return;
-
-      NotificationInitializer.clearActiveAlert();
-
-      Navigator.pushReplacementNamed(context, "/dashboard");
-      return;
-    }
-
-    final data = doc.data();
-    final status = data?["status"];
-
-    lat = (data?["lat"] as num?)?.toDouble();
-    lng = (data?["lng"] as num?)?.toDouble();
-
-    if (status != "pending" && status != "sent") {
-      if (!mounted) return;
-
-      NotificationInitializer.clearActiveAlert();
-
-      Navigator.pushReplacementNamed(context, "/dashboard");
-      return;
-    }
-
-    setState(() {});
-
-    _startListeners();
-    _startCountdown();
-    _verifyAndStartFeedback();
-  }
-
   Future<void> _verifyAndStartFeedback() async {
+
     if (feedbackStarted) return;
 
     feedbackStarted = true;
@@ -138,6 +109,7 @@ class _AlertScreenState extends State<AlertScreen> {
   }
 
   Future<void> _startVibration() async {
+
     final hasVibrator = await Vibration.hasVibrator();
 
     if (hasVibrator != true) return;
@@ -153,9 +125,10 @@ class _AlertScreenState extends State<AlertScreen> {
   }
 
   Future<void> _playAlertSound() async {
+
     await audioPlayer.setReleaseMode(ReleaseMode.stop);
 
-    audioPlayer.onPlayerComplete.listen((event) {
+    audioPlayer.onPlayerComplete.first.then((_) {
       if (!handled) {
         audioPlayer.play(
           AssetSource("sounds/alert.wav"),
@@ -175,6 +148,7 @@ class _AlertScreenState extends State<AlertScreen> {
   }
 
   void _startCountdown() {
+
     if (timer != null) return;
 
     timer = Timer.periodic(
@@ -193,18 +167,28 @@ class _AlertScreenState extends State<AlertScreen> {
   }
 
   void _startListeners() {
+
     alertListener = FirebaseFirestore.instance
         .collection("alerts")
         .doc(widget.alertId)
         .snapshots()
         .listen((snap) {
-      final status = snap.data()?["status"];
+
+      final data = snap.data();
+
+      lat = (data?["lat"] as num?)?.toDouble();
+      lng = (data?["lng"] as num?)?.toDouble();
+
+      final status = data?["status"];
 
       if (status == "handled" ||
           status == "cancelled_by_device" ||
           status == "sms_failed") {
+
         _handleExternalCancel();
       }
+
+      if (mounted) setState(() {});
     });
 
     deviceListener = FirebaseFirestore.instance
@@ -212,6 +196,7 @@ class _AlertScreenState extends State<AlertScreen> {
         .doc(widget.deviceId)
         .snapshots()
         .listen((snap) {
+
       final status = snap.data()?["fallStatus"];
 
       if (status == "cancelled_by_device") {
@@ -221,6 +206,7 @@ class _AlertScreenState extends State<AlertScreen> {
   }
 
   Future<void> _finalizeAlert() async {
+
     if (handled) return;
 
     handled = true;
@@ -256,6 +242,7 @@ class _AlertScreenState extends State<AlertScreen> {
   }
 
   void _handleExternalCancel() {
+
     if (handled || redirected) return;
 
     handled = true;
@@ -275,7 +262,8 @@ class _AlertScreenState extends State<AlertScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final size = MediaQuery.of(context).size;
+
+    final alertTime = TimeOfDay.now().format(context);
 
     return Scaffold(
       backgroundColor: const Color(0xFF0A0F1E),
@@ -302,12 +290,15 @@ class _AlertScreenState extends State<AlertScreen> {
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
+
                     const Icon(
                       Icons.warning_rounded,
                       color: Colors.redAccent,
                       size: 42,
                     ),
+
                     const SizedBox(height: 10),
+
                     const Text(
                       "Fall Detected",
                       style: TextStyle(
@@ -316,7 +307,9 @@ class _AlertScreenState extends State<AlertScreen> {
                         fontWeight: FontWeight.w800,
                       ),
                     ),
+
                     const SizedBox(height: 6),
+
                     Text(
                       "Device: ${widget.deviceId}",
                       style: const TextStyle(
@@ -324,12 +317,52 @@ class _AlertScreenState extends State<AlertScreen> {
                         fontSize: 13,
                       ),
                     ),
+
+                    const SizedBox(height: 12),
+
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        const Icon(Icons.access_time, color: Colors.white54, size: 16),
+                        const SizedBox(width: 6),
+                        Text(
+                          "Time: $alertTime",
+                          style: const TextStyle(
+                            color: Colors.white60,
+                            fontSize: 13,
+                          ),
+                        ),
+                      ],
+                    ),
+
+                    const SizedBox(height: 6),
+
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        const Icon(Icons.location_on, color: Colors.white54, size: 16),
+                        const SizedBox(width: 6),
+                        Text(
+                          lat != null && lng != null
+                              ? "${lat!.toStringAsFixed(5)}, ${lng!.toStringAsFixed(5)}"
+                              : "Acquiring location...",
+                          style: const TextStyle(
+                            color: Colors.white60,
+                            fontSize: 13,
+                          ),
+                        ),
+                      ],
+                    ),
+
                     const SizedBox(height: 26),
+
                     const Text(
                       "Automatic handling in",
                       style: TextStyle(color: Colors.white54),
                     ),
+
                     const SizedBox(height: 6),
+
                     FittedBox(
                       child: Text(
                         "$seconds",
@@ -340,40 +373,23 @@ class _AlertScreenState extends State<AlertScreen> {
                         ),
                       ),
                     ),
+
                     const Text(
                       "seconds",
                       style: TextStyle(color: Colors.white38),
                     ),
+
                     const SizedBox(height: 18),
+
                     const Text(
-                      "A fall has been detected by the device.\nEmergency alert has been triggered.",
+                      "Emergency alert has been triggered.",
                       textAlign: TextAlign.center,
                       style: TextStyle(
                         color: Colors.white38,
                         height: 1.4,
                       ),
                     ),
-                    const SizedBox(height: 28),
-                    SizedBox(
-                      width: double.infinity,
-                      child: ElevatedButton(
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.redAccent,
-                          padding: const EdgeInsets.symmetric(vertical: 14),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(14),
-                          ),
-                        ),
-                        onPressed: handled ? null : _finalizeAlert,
-                        child: Text(
-                          handled ? "Sending..." : "Send Emergency Alert Now",
-                          style: const TextStyle(
-                            fontWeight: FontWeight.bold,
-                            fontSize: 15,
-                          ),
-                        ),
-                      ),
-                    ),
+
                   ],
                 ),
               ),
